@@ -39,6 +39,7 @@
 #include <ctype.h>
 
 #include "../Core/DicomFormat/DicomTag.h"
+#include "../Core/FileBuffer.h"
 #include "../Core/HttpServer/HttpToolbox.h"
 #include "../Core/Logging.h"
 #include "../Core/MetricsRegistry.h"
@@ -331,6 +332,7 @@ TEST(Uri, AutodetectMimeType)
   ASSERT_EQ(MimeType_PNaCl, SystemToolbox::AutodetectMimeType("NOTES.pexe"));
   ASSERT_EQ(MimeType_Svg, SystemToolbox::AutodetectMimeType("NOTES.svg"));
   ASSERT_EQ(MimeType_Woff, SystemToolbox::AutodetectMimeType("NOTES.woff"));
+  ASSERT_EQ(MimeType_Woff2, SystemToolbox::AutodetectMimeType("NOTES.woff2"));
 
   // Test primitives from the "RegisterDefaultExtensions()" that was
   // present in the sample "Serve Folders plugin" of Orthanc 1.4.2
@@ -343,6 +345,7 @@ TEST(Uri, AutodetectMimeType)
   ASSERT_STREQ("application/x-nacl", EnumerationToString(SystemToolbox::AutodetectMimeType(".nexe")));
   ASSERT_STREQ("application/x-pnacl", EnumerationToString(SystemToolbox::AutodetectMimeType(".pexe")));
   ASSERT_STREQ("application/xml", EnumerationToString(SystemToolbox::AutodetectMimeType(".xml")));
+  ASSERT_STREQ("font/woff2", EnumerationToString(SystemToolbox::AutodetectMimeType(".woff2")));
   ASSERT_STREQ("image/gif", EnumerationToString(SystemToolbox::AutodetectMimeType(".gif")));
   ASSERT_STREQ("image/jpeg", EnumerationToString(SystemToolbox::AutodetectMimeType(".jpeg")));
   ASSERT_STREQ("image/jpeg", EnumerationToString(SystemToolbox::AutodetectMimeType(".jpg")));
@@ -372,34 +375,6 @@ TEST(Toolbox, ComputeSHA1)
   ASSERT_EQ("2fd4e1c6-7a2d28fc-ed849ee1-bb76e739-1b93eb12", s);
   Toolbox::ComputeSHA1(s, "");
   ASSERT_EQ("da39a3ee-5e6b4b0d-3255bfef-95601890-afd80709", s);
-}
-
-
-static std::string EncodeBase64Bis(const std::string& s)
-{
-  std::string result;
-  Toolbox::EncodeBase64(result, s);
-  return result;
-}
-
-
-TEST(Toolbox, Base64)
-{
-  ASSERT_EQ("", EncodeBase64Bis(""));
-  ASSERT_EQ("YQ==", EncodeBase64Bis("a"));
-
-  const std::string hello = "SGVsbG8gd29ybGQ=";
-  ASSERT_EQ(hello, EncodeBase64Bis("Hello world"));
-
-  std::string decoded;
-  Toolbox::DecodeBase64(decoded, hello);
-  ASSERT_EQ("Hello world", decoded);
-
-  // Invalid character
-  ASSERT_THROW(Toolbox::DecodeBase64(decoded, "?"), OrthancException);
-
-  // All the allowed characters
-  Toolbox::DecodeBase64(decoded, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=");
 }
 
 TEST(Toolbox, PathToExecutable)
@@ -450,7 +425,7 @@ TEST(Toolbox, ConvertFromLatin1)
   ASSERT_EQ("&abc", Toolbox::ConvertToAscii(s));
 
   // Open in Emacs, then save with UTF-8 encoding, then "hexdump -C"
-  std::string utf8 = Toolbox::ConvertToUtf8(s, Encoding_Latin1);
+  std::string utf8 = Toolbox::ConvertToUtf8(s, Encoding_Latin1, false);
   ASSERT_EQ(15u, utf8.size());
   ASSERT_EQ(0xc3, static_cast<unsigned char>(utf8[0]));
   ASSERT_EQ(0xa0, static_cast<unsigned char>(utf8[1]));
@@ -477,8 +452,71 @@ TEST(Toolbox, FixUtf8)
 
   std::string s((char*) &latin1[0], sizeof(latin1) / sizeof(char));
 
-  ASSERT_EQ(s, Toolbox::ConvertFromUtf8(Toolbox::ConvertToUtf8(s, Encoding_Latin1), Encoding_Latin1));
-  ASSERT_EQ("cre", Toolbox::ConvertToUtf8(s, Encoding_Utf8));
+  ASSERT_EQ(s, Toolbox::ConvertFromUtf8(Toolbox::ConvertToUtf8(s, Encoding_Latin1, false), Encoding_Latin1));
+  ASSERT_EQ("cre", Toolbox::ConvertToUtf8(s, Encoding_Utf8, false));
+}
+
+
+static int32_t GetUnicode(const uint8_t* data,
+                          size_t size,
+                          size_t expectedLength)
+{
+  std::string s((char*) &data[0], size);
+  uint32_t unicode;
+  size_t length;
+  Toolbox::Utf8ToUnicodeCharacter(unicode, length, s, 0);
+  if (length != expectedLength)
+  {
+    return -1;  // Error case
+  }
+  else
+  {
+    return unicode;
+  }
+}
+
+
+TEST(Toolbox, Utf8ToUnicode)
+{
+  // https://en.wikipedia.org/wiki/UTF-8
+  
+  ASSERT_EQ(1u, sizeof(char));
+  ASSERT_EQ(1u, sizeof(uint8_t));
+  
+  {
+    const uint8_t data[] = { 0x24 };
+    ASSERT_EQ(0x24, GetUnicode(data, 1, 1));
+    ASSERT_THROW(GetUnicode(data, 0, 1), OrthancException);
+  }
+  
+  {
+    const uint8_t data[] = { 0xc2, 0xa2 };
+    ASSERT_EQ(0xa2, GetUnicode(data, 2, 2));
+    ASSERT_THROW(GetUnicode(data, 1, 2), OrthancException);
+  }
+  
+  {
+    const uint8_t data[] = { 0xe0, 0xa4, 0xb9 };
+    ASSERT_EQ(0x0939, GetUnicode(data, 3, 3));
+    ASSERT_THROW(GetUnicode(data, 2, 3), OrthancException);
+  }
+  
+  {
+    const uint8_t data[] = { 0xe2, 0x82, 0xac };
+    ASSERT_EQ(0x20ac, GetUnicode(data, 3, 3));
+    ASSERT_THROW(GetUnicode(data, 2, 3), OrthancException);
+  }
+  
+  {
+    const uint8_t data[] = { 0xf0, 0x90, 0x8d, 0x88 };
+    ASSERT_EQ(0x010348, GetUnicode(data, 4, 4));
+    ASSERT_THROW(GetUnicode(data, 3, 4), OrthancException);
+  }
+  
+  {
+    const uint8_t data[] = { 0xe0 };
+    ASSERT_THROW(GetUnicode(data, 1, 1), OrthancException);
+  }
 }
 
 
@@ -644,6 +682,21 @@ TEST(Toolbox, WriteFile)
 }
 
 
+TEST(Toolbox, FileBuffer)
+{
+  FileBuffer f;
+  f.Append("a", 1);
+  f.Append("", 0);
+  f.Append("bc", 2);
+
+  std::string s;
+  f.Read(s);
+  ASSERT_EQ("abc", s);
+
+  ASSERT_THROW(f.Append("d", 1), OrthancException);  // File is closed
+}
+
+
 TEST(Toolbox, Wildcard)
 {
   ASSERT_EQ("abcd", Toolbox::WildcardToRegularExpression("abcd"));
@@ -690,6 +743,9 @@ TEST(Toolbox, Enumerations)
   ASSERT_EQ(Encoding_Japanese, StringToEncoding(EnumerationToString(Encoding_Japanese)));
   ASSERT_EQ(Encoding_Chinese, StringToEncoding(EnumerationToString(Encoding_Chinese)));
   ASSERT_EQ(Encoding_Thai, StringToEncoding(EnumerationToString(Encoding_Thai)));
+  ASSERT_EQ(Encoding_Korean, StringToEncoding(EnumerationToString(Encoding_Korean)));
+  ASSERT_EQ(Encoding_JapaneseKanji, StringToEncoding(EnumerationToString(Encoding_JapaneseKanji)));
+  ASSERT_EQ(Encoding_SimplifiedChinese, StringToEncoding(EnumerationToString(Encoding_SimplifiedChinese)));
 
   ASSERT_EQ(ResourceType_Patient, StringToResourceType(EnumerationToString(ResourceType_Patient)));
   ASSERT_EQ(ResourceType_Study, StringToResourceType(EnumerationToString(ResourceType_Study)));
@@ -1232,9 +1288,11 @@ TEST(Toolbox, SubstituteVariables)
 
   // The "PATH" environment variable should always be available on
   // machines running the unit tests
-  ASSERT_TRUE(env.find("PATH") != env.end());
+  ASSERT_TRUE(env.find("PATH") != env.end() /* Case used by UNIX */ ||
+              env.find("Path") != env.end() /* Case used by Windows */);
 
-  ASSERT_EQ("A" + env["PATH"] + "B",
+  env["PATH"] = "hello";
+  ASSERT_EQ("AhelloB",
             Toolbox::SubstituteVariables("A${PATH}B", env));
 }
 

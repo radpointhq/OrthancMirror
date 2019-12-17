@@ -40,6 +40,7 @@
 #include <set>
 #include <vector>
 #include <string>
+#include <memory>
 
 namespace Orthanc
 {
@@ -49,9 +50,36 @@ namespace Orthanc
     typedef std::map<std::string, std::string>                  Arguments;
     typedef std::vector< std::pair<std::string, std::string> >  GetArguments;
 
+
+    class IChunkedRequestReader : public boost::noncopyable
+    {
+    public:
+      virtual ~IChunkedRequestReader()
+      {
+      }
+
+      virtual void AddBodyChunk(const void* data,
+                                size_t size) = 0;
+
+      virtual void Execute(HttpOutput& output) = 0;
+    };
+
+
     virtual ~IHttpHandler()
     {
     }
+
+    /**
+     * This function allows to deal with chunked transfers (new in
+     * Orthanc 1.5.7). It is only called if "method" is POST or PUT.
+     **/
+    virtual bool CreateChunkedRequestReader(std::auto_ptr<IChunkedRequestReader>& target,
+                                            RequestOrigin origin,
+                                            const char* remoteIp,
+                                            const char* username,
+                                            HttpMethod method,
+                                            const UriComponents& uri,
+                                            const Arguments& headers) = 0;
 
     virtual bool Handle(HttpOutput& output,
                         RequestOrigin origin,
@@ -61,7 +89,7 @@ namespace Orthanc
                         const UriComponents& uri,
                         const Arguments& headers,
                         const GetArguments& getArguments,
-                        const char* bodyData,
+                        const void* bodyData,
                         size_t bodySize) = 0;
   };
 }

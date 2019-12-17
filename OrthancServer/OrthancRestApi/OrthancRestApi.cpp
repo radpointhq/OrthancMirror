@@ -110,15 +110,17 @@ namespace Orthanc
   {
     ServerContext& context = OrthancRestApi::GetContext(call);
 
-    if (call.GetBodySize() == 0)
-    {
-      return;
-    }
-
     LOG(INFO) << "Receiving a DICOM file of " << call.GetBodySize() << " bytes through HTTP";
 
+    if (call.GetBodySize() == 0)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat,
+                             "Received an empty DICOM file");
+    }
+
     // TODO Remove unneccessary memcpy
-    std::string postData(call.GetBodyData(), call.GetBodySize());
+    std::string postData;
+    call.BodyToString(postData);
 
     DicomInstanceToStore toStore;
     toStore.SetOrigin(DicomInstanceOrigin::FromRest(call));
@@ -168,7 +170,7 @@ namespace Orthanc
                               const UriComponents& uri,
                               const Arguments& headers,
                               const GetArguments& getArguments,
-                              const char* bodyData,
+                              const void* bodyData,
                               size_t bodySize)
   {
     MetricsRegistry::Timer timer(context_.GetMetricsRegistry(), "orthanc_rest_api_duration_ms");
@@ -250,17 +252,11 @@ namespace Orthanc
     if (synchronous)
     {
       Json::Value successContent;
-      if (context.GetJobsEngine().GetRegistry().SubmitAndWait
-          (successContent, raii.release(), priority))
-      {
-        // Success in synchronous execution
-        output.AnswerJson(successContent);
-      }
-      else
-      {
-        // Error during synchronous execution
-        output.SignalError(HttpStatus_500_InternalServerError);
-      }
+      context.GetJobsEngine().GetRegistry().SubmitAndWait
+        (successContent, raii.release(), priority);
+
+      // Success in synchronous execution
+      output.AnswerJson(successContent);
     }
     else
     {

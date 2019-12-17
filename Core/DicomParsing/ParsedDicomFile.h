@@ -81,7 +81,8 @@ namespace Orthanc
                     bool keepSopInstanceUid);
 
     void CreateFromDicomMap(const DicomMap& source,
-                            Encoding defaultEncoding);
+                            Encoding defaultEncoding,
+                            bool permissive);
 
     void RemovePrivateTagsInternal(const std::set<DicomTag>* toKeep);
 
@@ -97,9 +98,8 @@ namespace Orthanc
     ParsedDicomFile(bool createIdentifiers);  // Create a minimal DICOM instance
 
     ParsedDicomFile(const DicomMap& map,
-                    Encoding defaultEncoding);
-
-    ParsedDicomFile(const DicomMap& map);
+                    Encoding defaultEncoding,
+                    bool permissive);
 
     ParsedDicomFile(const void* content,
                     size_t size);
@@ -186,7 +186,7 @@ namespace Orthanc
     void EmbedImage(MimeType mime,
                     const std::string& content);
 
-    Encoding GetEncoding() const;
+    Encoding DetectEncoding(bool& hasCodeExtensions) const;
 
     // WARNING: This function only sets the encoding, it will not
     // convert the encoding of the tags. Use "ChangeEncoding()" if need be.

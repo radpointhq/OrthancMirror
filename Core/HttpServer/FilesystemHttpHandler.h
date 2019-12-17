@@ -53,6 +53,17 @@ namespace Orthanc
     FilesystemHttpHandler(const std::string& baseUri,
                           const std::string& root);
 
+    virtual bool CreateChunkedRequestReader(std::auto_ptr<IChunkedRequestReader>& target,
+                                            RequestOrigin origin,
+                                            const char* remoteIp,
+                                            const char* username,
+                                            HttpMethod method,
+                                            const UriComponents& uri,
+                                            const Arguments& headers)
+    {
+      return false;
+    }
+
     virtual bool Handle(
       HttpOutput& output,
       RequestOrigin origin,
@@ -62,7 +73,7 @@ namespace Orthanc
       const UriComponents& uri,
       const Arguments& headers,
       const GetArguments& arguments,
-      const char* /*bodyData*/,
+      const void* /*bodyData*/,
       size_t /*bodySize*/);
 
     bool IsListDirectoryContent() const

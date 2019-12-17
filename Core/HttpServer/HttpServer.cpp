@@ -36,9 +36,11 @@
 #include "../PrecompiledHeaders.h"
 #include "HttpServer.h"
 
-#include "../Logging.h"
 #include "../ChunkedBuffer.h"
+#include "../FileBuffer.h"
+#include "../Logging.h"
 #include "../OrthancException.h"
+#include "../TemporaryFile.h"
 #include "HttpToolbox.h"
 
 #if ORTHANC_ENABLE_MONGOOSE == 1
@@ -77,8 +79,8 @@
 
 namespace Orthanc
 {
-  static const char multipart[] = "multipart/form-data; boundary=";
-  static unsigned int multipartLength = sizeof(multipart) / sizeof(char) - 1;
+  static const char MULTIPART_FORM[] = "multipart/form-data; boundary=";
+  static unsigned int MULTIPART_FORM_LENGTH = sizeof(MULTIPART_FORM) / sizeof(char) - 1;
 
 
   namespace
@@ -300,21 +302,14 @@ namespace Orthanc
   }
 
 
-
-  static PostDataStatus ReadBody(std::string& postData,
-                                 struct mg_connection *connection,
-                                 const IHttpHandler::Arguments& headers)
+  static PostDataStatus ReadBodyWithContentLength(std::string& body,
+                                                  struct mg_connection *connection,
+                                                  const std::string& contentLength)
   {
-    IHttpHandler::Arguments::const_iterator cs = headers.find("content-length");
-    if (cs == headers.end())
-    {
-      return PostDataStatus_NoLength;
-    }
-
     int length;      
     try
     {
-      length = boost::lexical_cast<int>(cs->second);
+      length = boost::lexical_cast<int>(contentLength);
     }
     catch (boost::bad_lexical_cast&)
     {
@@ -326,12 +321,12 @@ namespace Orthanc
       length = 0;
     }
 
-    postData.resize(length);
+    body.resize(length);
 
     size_t pos = 0;
     while (length > 0)
     {
-      int r = mg_read(connection, &postData[pos], length);
+      int r = mg_read(connection, &body[pos], length);
       if (r <= 0)
       {
         return PostDataStatus_Failure;
@@ -344,19 +339,108 @@ namespace Orthanc
 
     return PostDataStatus_Success;
   }
+                                                  
+
+  static PostDataStatus ReadBodyToString(std::string& body,
+                                         struct mg_connection *connection,
+                                         const IHttpHandler::Arguments& headers)
+  {
+    IHttpHandler::Arguments::const_iterator contentLength = headers.find("content-length");
+
+    if (contentLength != headers.end())
+    {
+      // "Content-Length" is available
+      return ReadBodyWithContentLength(body, connection, contentLength->second);
+    }
+    else
+    {
+      // No Content-Length. Store the individual chunks in a temporary
+      // file, then read it back into the memory buffer "body"
+      FileBuffer buffer;
+
+      std::string tmp(1024 * 1024, 0);
+      
+      for (;;)
+      {
+        int r = mg_read(connection, &tmp[0], tmp.size());
+        if (r < 0)
+        {
+          return PostDataStatus_Failure;
+        }
+        else if (r == 0)
+        {
+          break;
+        }
+        else
+        {
+          buffer.Append(tmp.c_str(), r);
+        }
+      }
+
+      buffer.Read(body);
+
+      return PostDataStatus_Success;
+    }
+  }
 
 
+  static PostDataStatus ReadBodyToStream(IHttpHandler::IChunkedRequestReader& stream,
+                                         struct mg_connection *connection,
+                                         const IHttpHandler::Arguments& headers)
+  {
+    IHttpHandler::Arguments::const_iterator contentLength = headers.find("content-length");
 
-  static PostDataStatus ParseMultipartPost(std::string &completedFile,
+    if (contentLength != headers.end())
+    {
+      // "Content-Length" is available
+      std::string body;
+      PostDataStatus status = ReadBodyWithContentLength(body, connection, contentLength->second);
+
+      if (status == PostDataStatus_Success &&
+          !body.empty())
+      {
+        stream.AddBodyChunk(body.c_str(), body.size());
+      }
+
+      return status;
+    }
+    else
+    {
+      // No Content-Length: This is a chunked transfer. Stream the HTTP connection.
+      std::string tmp(1024 * 1024, 0);
+      
+      for (;;)
+      {
+        int r = mg_read(connection, &tmp[0], tmp.size());
+        if (r < 0)
+        {
+          return PostDataStatus_Failure;
+        }
+        else if (r == 0)
+        {
+          break;
+        }
+        else
+        {
+          stream.AddBodyChunk(tmp.c_str(), r);
+        }
+      }
+
+      return PostDataStatus_Success;
+    }
+  }
+
+
+  static PostDataStatus ParseMultipartForm(std::string &completedFile,
                                            struct mg_connection *connection,
                                            const IHttpHandler::Arguments& headers,
                                            const std::string& contentType,
                                            ChunkStore& chunkStore)
   {
-    std::string boundary = "--" + contentType.substr(multipartLength);
+    std::string boundary = "--" + contentType.substr(MULTIPART_FORM_LENGTH);
 
-    std::string postData;
-    PostDataStatus status = ReadBody(postData, connection, headers);
+    std::string body;
+    PostDataStatus status = ReadBodyToString(body, connection, headers);
 
     if (status != PostDataStatus_Success)
     {
@@ -399,11 +483,12 @@ namespace Orthanc
 
     //chunkStore.Print();
 
+    // TODO - Refactor using class "MultipartStreamReader"
     try
     {
       FindIterator last;
       for (FindIterator it =
-             make_find_iterator(postData, boost::first_finder(boundary));
+             make_find_iterator(body, boost::first_finder(boundary));
            it!=FindIterator();
            ++it)
       {
@@ -722,7 +807,25 @@ namespace Orthanc
     }
 
 
-    // Extract the body of the request for PUT and POST
+    // Decompose the URI into its components
+    UriComponents uri;
+    try
+    {
+      Toolbox::SplitUriComponents(uri, requestUri);
+    }
+    catch (OrthancException&)
+    {
+      output.SendStatus(HttpStatus_400_BadRequest);
+      return;
+    }
+
+    LOG(INFO) << EnumerationToString(method) << " " << Toolbox::FlattenUri(uri);
+
+
+    bool found = false;
+
+    // Extract the body of the request for PUT and POST, or process
+    // the body as a stream
 
     // TODO Avoid unneccessary memcopy of the body
 
@@ -732,23 +835,48 @@ namespace Orthanc
     {
       PostDataStatus status;
 
+      bool isMultipartForm = false;
+
       IHttpHandler::Arguments::const_iterator ct = headers.find("content-type");
-      if (ct == headers.end())
+      if (ct != headers.end() &&
+          ct->second.size() >= MULTIPART_FORM_LENGTH &&
+          !memcmp(ct->second.c_str(), MULTIPART_FORM, MULTIPART_FORM_LENGTH))
       {
-        // No content-type specified. Assume no multi-part content occurs at this point.
-        status = ReadBody(body, connection, headers);          
+        /** 
+         * The user uses the "upload" form of Orthanc Explorer, for
+         * file uploads through a HTML form.
+         **/
+        status = ParseMultipartForm(body, connection, headers, ct->second, server.GetChunkStore());
+        isMultipartForm = true;
       }
-      else
+
+      if (!isMultipartForm)
       {
-        std::string contentType = ct->second;
-        if (contentType.size() >= multipartLength &&
-            !memcmp(contentType.c_str(), multipart, multipartLength))
+        std::auto_ptr<IHttpHandler::IChunkedRequestReader> stream;
+
+        if (server.HasHandler())
         {
-          status = ParseMultipartPost(body, connection, headers, contentType, server.GetChunkStore());
+          found = server.GetHandler().CreateChunkedRequestReader
+            (stream, RequestOrigin_RestApi, remoteIp, username.c_str(), method, uri, headers);
+        }
+        
+        if (found)
+        {
+          if (stream.get() == NULL)
+          {
+            throw OrthancException(ErrorCode_InternalError);
+          }
+
+          status = ReadBodyToStream(*stream, connection, headers);
+
+          if (status == PostDataStatus_Success)
+          {
+            stream->Execute(output);
+          }
         }
         else
         {
-          status = ReadBody(body, connection, headers);
+          status = ReadBodyToString(body, connection, headers);
         }
       }
 
@@ -766,30 +894,17 @@ namespace Orthanc
           output.AnswerEmpty();
           return;
 
-        default:
+        case PostDataStatus_Success:
           break;
+
+        default:
+          throw OrthancException(ErrorCode_InternalError);
       }
     }
 
 
-    // Decompose the URI into its components
-    UriComponents uri;
-    try
-    {
-      Toolbox::SplitUriComponents(uri, requestUri);
-    }
-    catch (OrthancException&)
-    {
-      output.SendStatus(HttpStatus_400_BadRequest);
-      return;
-    }
-
-
-    LOG(INFO) << EnumerationToString(method) << " " << Toolbox::FlattenUri(uri);
-
-    bool found = false;
-
-    if (server.HasHandler())
+    if (!found && 
+        server.HasHandler())
     {
       found = server.GetHandler().Handle(output, RequestOrigin_RestApi, remoteIp, username.c_str(), 
                                          method, uri, headers, argumentsGET, body.c_str(), body.size());
@@ -958,6 +1073,7 @@ namespace Orthanc
     realm_ = ORTHANC_REALM;
     threadsCount_ = 50;  // Default value in mongoose
     tcpNoDelay_ = true;
+    requestTimeout_ = 30;  // Default value in mongoose/civetweb (30 seconds)
 
 #if ORTHANC_ENABLE_MONGOOSE == 1
     LOG(INFO) << "This Orthanc server uses Mongoose as its embedded HTTP server";
@@ -1005,6 +1121,7 @@ namespace Orthanc
     {
       std::string port = boost::lexical_cast<std::string>(port_);
       std::string numThreads = boost::lexical_cast<std::string>(threadsCount_);
+      std::string requestTimeoutMilliseconds = boost::lexical_cast<std::string>(requestTimeout_ * 1000);
 
       if (ssl_)
       {
@@ -1035,6 +1152,9 @@ namespace Orthanc
         // Set the number of threads
         "num_threads", numThreads.c_str(),
         
+        // Set the timeout for the HTTP server
+        "request_timeout_ms", requestTimeoutMilliseconds.c_str(),
+
         // Set the SSL certificate, if any. This must be the last option.
         ssl_ ? "ssl_certificate" : NULL,
         certificate_.c_str(),
@@ -1056,7 +1176,8 @@ namespace Orthanc
 
       if (!pimpl_->context_)
       {
-        throw OrthancException(ErrorCode_HttpPortInUse);
+        throw OrthancException(ErrorCode_HttpPortInUse,
+                               " (port = " + boost::lexical_cast<std::string>(port_) + ")");
       }
 
       LOG(WARNING) << "HTTP server listening on port: " << GetPortNumber()
@@ -1206,12 +1327,26 @@ namespace Orthanc
     LOG(INFO) << "The embedded HTTP server will use " << threads << " threads";
   }
 
-
+  
   void HttpServer::SetTcpNoDelay(bool tcpNoDelay)
   {
     Stop();
     tcpNoDelay_ = tcpNoDelay;
     LOG(INFO) << "TCP_NODELAY for the HTTP sockets is set to "
               << (tcpNoDelay ? "true" : "false");
+  }
+
+
+  void HttpServer::SetRequestTimeout(unsigned int seconds)
+  {
+    if (seconds <= 0)
+    {
+      throw OrthancException(ErrorCode_ParameterOutOfRange,
+                             "Request timeout must be a stricly positive integer");
+    }
+
+    Stop();
+    requestTimeout_ = seconds;
+    LOG(INFO) << "Request timeout in the HTTP server is set to " << seconds << " seconds";
   }
 }

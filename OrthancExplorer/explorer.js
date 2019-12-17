@@ -79,6 +79,11 @@ $(document).ready(function() {
         $tree.tree('openNode', event.node, true);
     }
   );
+
+  // Inject the template of the warning about insecure setup as the
+  // first child of each page
+  var insecure = $('#template-insecure').html();
+  $('[data-role="page"]>[data-role="content"]').prepend(insecure);
   
   currentPage = $.mobile.pageData.active;
   currentUuid = $.mobile.pageData.uuid;
@@ -90,6 +95,31 @@ $(document).ready(function() {
     Refresh();
   }
 });
+
+function GetAuthorizationTokensFromUrl() {
+  var urlVariables = window.location.search.substring(1).split('&');
+  var dict = {};
+
+  for (var i = 0; i < urlVariables.length; i++) {
+      var split = urlVariables[i].split('=');
+
+      if (split.length == 2 && (split[0] == "token" || split[0] == "auth-token" || split[0] == "authorization")) {
+        dict[split[0]] = split[1];
+      }
+  }
+  return dict;
+};
+
+var authorizationTokens = GetAuthorizationTokensFromUrl();
+
+/* Copy the authoziation toekn from the url search parameters into HTTP headers in every request to the Rest API.  
+Thanks to this behaviour, you may specify a ?token=xxx in your url and this will be passed 
+as the "token" header in every request to the API allowing you to use the authorization plugin */
+$.ajaxSetup(
+  {
+    headers : authorizationTokens
+  }
+);
 
 
 function SplitLongUid(s)
@@ -362,6 +392,14 @@ $('[data-role="page"]').live('pagebeforeshow', function() {
                                 .attr('href', 'explorer.html')
                                 .text(s.Name)
                                 .append(' &raquo; '));
+      }
+
+      // New in Orthanc 1.5.8
+      if ('IsHttpServerSecure' in s &&
+          !s.IsHttpServerSecure) {
+        $('.warning-insecure').show();
+      } else {
+        $('.warning-insecure').hide();
       }
     }
   });
@@ -1457,7 +1495,6 @@ $('#job').live('pagebeforeshow', function() {
         target.listview('refresh');
 
         $('#job-cancel').closest('.ui-btn').hide();
-        $('#job-retry').closest('.ui-btn').hide();
         $('#job-resubmit').closest('.ui-btn').hide();
         $('#job-pause').closest('.ui-btn').hide();
         $('#job-resume').closest('.ui-btn').hide();

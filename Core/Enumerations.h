@@ -49,16 +49,32 @@
 // Macros "ORTHANC_OVERRIDE" and "ORTHANC_FINAL" wrap the "override"
 // and "final" keywords introduced in C++11, to do compile-time
 // checking of virtual methods
+// The __cplusplus macro is broken in Visual Studio up to 15.6 and, in
+// later versions, require the usage of the /Zc:__cplusplus flag
+// We thus use an alternate way of checking for 'override' support
+#ifdef ORTHANC_OVERRIDE_SUPPORTED
+#error ORTHANC_OVERRIDE_SUPPORTED cannot be defined at this point
+#endif 
+
 #if __cplusplus >= 201103L
-// C++11 is enabled
-#  define ORTHANC_OVERRIDE  override
+#  define ORTHANC_OVERRIDE_SUPPORTED 1
+#else
+#  ifdef _MSC_VER
+#    if _MSC_VER >= 1600
+#      define ORTHANC_OVERRIDE_SUPPORTED 1
+#    endif
+#  endif
+#endif
+
+#if ORTHANC_OVERRIDE_SUPPORTED
+// The override keyword (C++11) is enabled
+#  define ORTHANC_OVERRIDE  override 
 #  define ORTHANC_FINAL     final
 #else
-// C++11 is disabled
+// The override keyword (C++11) is not available
 #  define ORTHANC_OVERRIDE
 #  define ORTHANC_FINAL
 #endif
-
 
 namespace Orthanc
 {
@@ -105,6 +121,7 @@ namespace Orthanc
     MimeType_WebAssembly,
     MimeType_Xml,
     MimeType_Woff,            // Web Open Font Format
+    MimeType_Woff2,
     MimeType_Zip,
     MimeType_PrometheusText,  // Prometheus text-based exposition format (for metrics)
     MimeType_DicomWebJson,
@@ -162,6 +179,7 @@ namespace Orthanc
     ErrorCode_NullPointer = 35    /*!< Cannot handle a NULL pointer */,
     ErrorCode_DatabaseUnavailable = 36    /*!< The database is currently not available (probably a transient situation) */,
     ErrorCode_CanceledJob = 37    /*!< This job was canceled */,
+    ErrorCode_BadGeometry = 38    /*!< Geometry error encountered in Stone */,
     ErrorCode_SQLiteNotOpened = 1000    /*!< SQLite: The database is not opened */,
     ErrorCode_SQLiteAlreadyOpened = 1001    /*!< SQLite: Connection is already open */,
     ErrorCode_SQLiteCannotOpen = 1002    /*!< SQLite: Unable to open the database */,
@@ -221,6 +239,7 @@ namespace Orthanc
     ErrorCode_CannotOrderSlices = 2040    /*!< Unable to order the slices of the series */,
     ErrorCode_NoWorklistHandler = 2041    /*!< No request handler factory for DICOM C-Find Modality SCP */,
     ErrorCode_AlreadyExistingTag = 2042    /*!< Cannot override the value of a tag that already exists */,
+    ErrorCode_UnsupportedMediaType = 3000    /*!< Unsupported media type */,
     ErrorCode_START_PLUGINS = 1000000
   };
 
@@ -442,10 +461,11 @@ namespace Orthanc
     Encoding_Hebrew,
     Encoding_Thai,                          // TIS 620-2533
     Encoding_Japanese,                      // JIS X 0201 (Shift JIS): Katakana
-    Encoding_Chinese                        // GB18030 - Chinese simplified
-    //Encoding_JapaneseKanji,               // Multibyte - JIS X 0208: Kanji
+    Encoding_Chinese,                       // GB18030 - Chinese simplified
+    Encoding_JapaneseKanji,                 // Multibyte - JIS X 0208: Kanji
     //Encoding_JapaneseSupplementaryKanji,  // Multibyte - JIS X 0212: Supplementary Kanji set
-    //Encoding_Korean,                      // Multibyte - KS X 1001: Hangul and Hanja
+    Encoding_Korean,                        // Multibyte - KS X 1001: Hangul and Hanja
+    Encoding_SimplifiedChinese              // ISO 2022 IR 58
   };
 
 
@@ -728,6 +748,8 @@ namespace Orthanc
   const char* EnumerationToString(JobState state);
 
   const char* EnumerationToString(MimeType mime);
+
+  const char* EnumerationToString(Endianness endianness);
 
   Encoding StringToEncoding(const char* encoding);
 

@@ -89,9 +89,20 @@ namespace Orthanc
     class WorklistHandler;
     class FindHandler;
     class MoveHandler;
-
+    class HttpClientChunkedRequest;
+    class HttpClientChunkedAnswer;
+    class HttpServerChunkedReader;
+    
     void RegisterRestCallback(const void* parameters,
                               bool lock);
+
+    void RegisterChunkedRestCallback(const void* parameters);
+
+    bool HandleChunkedGetDelete(HttpOutput& output,
+                                HttpMethod method,
+                                const UriComponents& uri,
+                                const Arguments& headers,
+                                const GetArguments& getArguments);
 
     void RegisterOnStoredInstanceCallback(const void* parameters);
 
@@ -164,6 +175,8 @@ namespace Orthanc
 
     void CallHttpClient2(const void* parameters);
 
+    void ChunkedHttpClient(const void* parameters);
+
     void CallPeerApi(const void* parameters);
   
     void GetFontInfo(const void* parameters);
@@ -189,6 +202,8 @@ namespace Orthanc
 
     void ComputeHash(_OrthancPluginService service,
                      const void* parameters);
+
+    void GetTagName(const void* parameters);
 
     void SignalChangeInternal(OrthancPluginChangeType changeType,
                               OrthancPluginResourceType resourceType,
@@ -219,7 +234,7 @@ namespace Orthanc
                         const UriComponents& uri,
                         const Arguments& headers,
                         const GetArguments& getArguments,
-                        const char* bodyData,
+                        const void* bodyData,
                         size_t bodySize);
 
     virtual bool InvokeService(SharedLibrary& plugin,
@@ -317,6 +332,15 @@ namespace Orthanc
                          const Json::Value& value);
 
     void RefreshMetrics();
+
+    // New in Orthanc 1.5.7
+    virtual bool CreateChunkedRequestReader(std::auto_ptr<IChunkedRequestReader>& target,
+                                            RequestOrigin origin,
+                                            const char* remoteIp,
+                                            const char* username,
+                                            HttpMethod method,
+                                            const UriComponents& uri,
+                                            const Arguments& headers);
   };
 }
 

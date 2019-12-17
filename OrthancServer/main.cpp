@@ -516,6 +516,7 @@ static void PrintHelp(const char* path)
     << "  --logfile=[file]\tfile where to store the log of Orthanc" << std::endl
     << "\t\t\t(by default, the log is dumped to stderr)" << std::endl
     << "  --config=[file]\tcreate a sample configuration file and exit" << std::endl
+    << "\t\t\t(if file is \"-\", dumps to stdout)" << std::endl
     << "  --errors\t\tprint the supported error codes and exit" << std::endl
     << "  --verbose\t\tbe verbose in logs" << std::endl
     << "  --trace\t\thighest verbosity in logs (for debug)" << std::endl
@@ -611,6 +612,7 @@ static void PrintErrors(const char* path)
     PrintErrorCode(ErrorCode_NullPointer, "Cannot handle a NULL pointer");
     PrintErrorCode(ErrorCode_DatabaseUnavailable, "The database is currently not available (probably a transient situation)");
     PrintErrorCode(ErrorCode_CanceledJob, "This job was canceled");
+    PrintErrorCode(ErrorCode_BadGeometry, "Geometry error encountered in Stone");
     PrintErrorCode(ErrorCode_SQLiteNotOpened, "SQLite: The database is not opened");
     PrintErrorCode(ErrorCode_SQLiteAlreadyOpened, "SQLite: Connection is already open");
     PrintErrorCode(ErrorCode_SQLiteCannotOpen, "SQLite: Unable to open the database");
@@ -670,6 +672,7 @@ static void PrintErrors(const char* path)
     PrintErrorCode(ErrorCode_CannotOrderSlices, "Unable to order the slices of the series");
     PrintErrorCode(ErrorCode_NoWorklistHandler, "No request handler factory for DICOM C-Find Modality SCP");
     PrintErrorCode(ErrorCode_AlreadyExistingTag, "Cannot override the value of a tag that already exists");
+    PrintErrorCode(ErrorCode_UnsupportedMediaType, "Unsupported media type");
   }
 
   std::cout << std::endl;
@@ -819,11 +822,72 @@ static bool StartHttpServer(ServerContext& context,
       httpServer.SetRemoteAccessAllowed(lock.GetConfiguration().GetBooleanParameter("RemoteAccessAllowed", false));
       httpServer.SetKeepAliveEnabled(lock.GetConfiguration().GetBooleanParameter("KeepAlive", defaultKeepAlive));
       httpServer.SetHttpCompressionEnabled(lock.GetConfiguration().GetBooleanParameter("HttpCompressionEnabled", true));
-      httpServer.SetAuthenticationEnabled(lock.GetConfiguration().GetBooleanParameter("AuthenticationEnabled", false));
       httpServer.SetTcpNoDelay(lock.GetConfiguration().GetBooleanParameter("TcpNoDelay", true));
+      httpServer.SetRequestTimeout(lock.GetConfiguration().GetUnsignedIntegerParameter("HttpRequestTimeout", 30));
 
-      lock.GetConfiguration().SetupRegisteredUsers(httpServer);
+      // Let's assume that the HTTP server is secure
+      context.SetHttpServerSecure(true);
 
+      bool authenticationEnabled;
+      if (lock.GetConfiguration().LookupBooleanParameter(authenticationEnabled, "AuthenticationEnabled"))
+      {
+        httpServer.SetAuthenticationEnabled(authenticationEnabled);
+
+        if (httpServer.IsRemoteAccessAllowed() &&
+            !authenticationEnabled)
+        {
+          LOG(WARNING) << "====> Remote access is enabled while user authentication is explicitly disabled, "
+                       << "your setup is POSSIBLY INSECURE <====";
+          context.SetHttpServerSecure(false);
+        }
+      }
+      else if (httpServer.IsRemoteAccessAllowed())
+      {
+        // Starting with Orthanc 1.5.8, it is impossible to enable
+        // remote access without having explicitly disabled user
+        // authentication.
+        LOG(WARNING) << "Remote access is allowed but \"AuthenticationEnabled\" is not in the configuration, "
+                     << "automatically enabling HTTP authentication for security";          
+        httpServer.SetAuthenticationEnabled(true);
+      }
+      else
+      {
+        // If Orthanc only listens on the localhost, it is OK to have
+        // "AuthenticationEnabled" disabled
+        httpServer.SetAuthenticationEnabled(false);
+      }
+
+      bool hasUsers = lock.GetConfiguration().SetupRegisteredUsers(httpServer);
+
+      if (httpServer.IsAuthenticationEnabled() &&
+          !hasUsers)
+      {
+        if (httpServer.IsRemoteAccessAllowed())
+        {
+          /**
+           * Starting with Orthanc 1.5.8, if no user is explicitly
+           * defined while remote access is allowed, we create a
+           * default user, and Orthanc Explorer shows a warning
+           * message about an "Insecure setup". This convention is
+           * used in Docker images "jodogne/orthanc",
+           * "jodogne/orthanc-plugins" and "osimis/orthanc".
+           **/
+          LOG(WARNING) << "====> HTTP authentication is enabled, but no user is declared. "
+                       << "Creating a default user: Review your configuration option \"RegisteredUsers\". "
+                       << "Your setup is INSECURE <====";
+
+          context.SetHttpServerSecure(false);
+
+          // This is the username/password of the default user in Orthanc.
+          httpServer.RegisterUser("orthanc", "orthanc");
+        }
+        else
+        {
+          LOG(WARNING) << "HTTP authentication is enabled, but no user is declared, "
+                       << "check the value of configuration option \"RegisteredUsers\"";
+        }
+      }
+      
       if (lock.GetConfiguration().GetBooleanParameter("SslEnabled", false))
       {
         std::string certificate = lock.GetConfiguration().InterpretStringParameterAsPath(
@@ -834,6 +898,18 @@ static bool StartHttpServer(ServerContext& context,
       else
       {
         httpServer.SetSslEnabled(false);
+      }
+
+      if (lock.GetConfiguration().GetBooleanParameter("ExecuteLuaEnabled", false))
+      {
+        context.SetExecuteLuaEnabled(true);
+        LOG(WARNING) << "====> Remote LUA script execution is enabled.  Review your configuration option \"ExecuteLuaEnabled\". "
+                     << "Your setup is POSSIBLY INSECURE <====";
+      }
+      else
+      {
+        context.SetExecuteLuaEnabled(false);
+        LOG(WARNING) << "Remote LUA script execution is disabled";
       }
     }
 
@@ -1115,7 +1191,11 @@ static bool ConfigureServerContext(IDatabaseWrapper& database,
                              lock.GetConfiguration().InterpretStringParameterAsPath
                              (lock.GetConfiguration().GetStringParameter("HttpsCACertificates", "")));
     HttpClient::SetDefaultVerbose(lock.GetConfiguration().GetBooleanParameter("HttpVerbose", false));
+
+    // The value "0" below makes the class HttpClient use its default
+    // value (DEFAULT_HTTP_TIMEOUT = 60 seconds in Orthanc 1.5.7)
     HttpClient::SetDefaultTimeout(lock.GetConfiguration().GetUnsignedIntegerParameter("HttpTimeout", 0));
+    
     HttpClient::SetDefaultProxy(lock.GetConfiguration().GetStringParameter("HttpProxy", ""));
     
     DicomUserConnection::SetDefaultTimeout(lock.GetConfiguration().GetUnsignedIntegerParameter("DicomScuTimeout", 10));
@@ -1396,7 +1476,15 @@ int main(int argc, char* argv[])
 
       try
       {
-        SystemToolbox::WriteFile(configurationSample, target);
+        if (target == "-")
+        {
+          // New in 1.5.8: Print to stdout
+          std::cout << configurationSample;
+        }
+        else
+        {
+          SystemToolbox::WriteFile(configurationSample, target);
+        }
         return 0;
       }
       catch (OrthancException&)

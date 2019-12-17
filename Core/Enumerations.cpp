@@ -57,6 +57,7 @@ namespace Orthanc
   static const char* const MIME_SVG = "image/svg+xml";
   static const char* const MIME_WEB_ASSEMBLY = "application/wasm";
   static const char* const MIME_WOFF = "application/x-font-woff";
+  static const char* const MIME_WOFF2 = "font/woff2";
   static const char* const MIME_XML_2 = "text/xml";
   static const char* const MIME_ZIP = "application/zip";
   static const char* const MIME_DICOM_WEB_JSON = "application/dicom+json";
@@ -184,6 +185,9 @@ namespace Orthanc
 
       case ErrorCode_CanceledJob:
         return "This job was canceled";
+
+      case ErrorCode_BadGeometry:
+        return "Geometry error encountered in Stone";
 
       case ErrorCode_SQLiteNotOpened:
         return "SQLite: The database is not opened";
@@ -361,6 +365,9 @@ namespace Orthanc
 
       case ErrorCode_AlreadyExistingTag:
         return "Cannot override the value of a tag that already exists";
+
+      case ErrorCode_UnsupportedMediaType:
+        return "Unsupported media type";
 
       default:
         if (error >= ErrorCode_START_PLUGINS)
@@ -646,6 +653,15 @@ namespace Orthanc
 
       case Encoding_Chinese:
         return "Chinese";
+
+      case Encoding_Korean:
+        return "Korean";
+
+      case Encoding_JapaneseKanji:
+        return "JapaneseKanji";
+
+      case Encoding_SimplifiedChinese:
+        return "SimplifiedChinese";
 
       default:
         throw OrthancException(ErrorCode_ParameterOutOfRange);
@@ -1106,6 +1122,9 @@ namespace Orthanc
       case MimeType_Woff:
         return MIME_WOFF;
 
+      case MimeType_Woff2:
+        return MIME_WOFF2;
+
       case MimeType_PrometheusText:
         // https://prometheus.io/docs/instrumenting/exposition_formats/#text-based-format
         return "text/plain; version=0.0.4";
@@ -1121,6 +1140,25 @@ namespace Orthanc
     }
   }
   
+
+  const char* EnumerationToString(Endianness endianness)
+  {
+    switch (endianness)
+    {
+      case Endianness_Little:
+        return "Little-endian";
+
+      case Endianness_Big:
+        return "Big-endian";
+
+      case Endianness_Unknown:
+        return "Unknown endianness";
+                
+      default:
+        throw OrthancException(ErrorCode_ParameterOutOfRange);
+    }
+  }
+
 
   Encoding StringToEncoding(const char* encoding)
   {
@@ -1200,6 +1238,21 @@ namespace Orthanc
     if (s == "CHINESE")
     {
       return Encoding_Chinese;
+    }
+
+    if (s == "KOREAN")
+    {
+      return Encoding_Korean;
+    }
+
+    if (s == "JAPANESEKANJI")
+    {
+      return Encoding_JapaneseKanji;
+    }
+
+    if (s == "SIMPLIFIEDCHINESE")
+    {
+      return Encoding_SimplifiedChinese;
     }
 
     throw OrthancException(ErrorCode_ParameterOutOfRange);
@@ -1724,6 +1777,10 @@ namespace Orthanc
     {
       return MimeType_Woff;
     }
+    else if (mime == MIME_WOFF2)
+    {
+      return MimeType_Woff2;
+    }
     else if (mime == MIME_DICOM_WEB_JSON)
     {
       return MimeType_DicomWebJson;
@@ -1836,11 +1893,13 @@ namespace Orthanc
     {
       encoding = Encoding_Hebrew;
     }
-    else if (s == "ISO_IR 166" || s == "ISO 2022 IR 166")
+    else if (s == "ISO_IR 166" ||
+             s == "ISO 2022 IR 166")
     {
       encoding = Encoding_Thai;
     }
-    else if (s == "ISO_IR 13" || s == "ISO 2022 IR 13")
+    else if (s == "ISO_IR 13" ||
+             s == "ISO 2022 IR 13")
     {
       encoding = Encoding_Japanese;
     }
@@ -1855,18 +1914,22 @@ namespace Orthanc
        **/
       encoding = Encoding_Chinese;
     }
+    else if (s == "ISO 2022 IR 149")
+    {
+      encoding = Encoding_Korean;
+    }
+    else if (s == "ISO 2022 IR 87")
+    {
+      encoding = Encoding_JapaneseKanji;
+    }
+    else if (s == "ISO 2022 IR 58")
+    {
+      encoding = Encoding_SimplifiedChinese;
+    }
     /*
-      else if (s == "ISO 2022 IR 149")
-      {
-      TODO
-      }
       else if (s == "ISO 2022 IR 159")
       {
-      TODO
-      }
-      else if (s == "ISO 2022 IR 87")
-      {
-      TODO
+      TODO - Supplementary Kanji set
       }
     */
     else
@@ -2013,6 +2076,15 @@ namespace Orthanc
       case Encoding_Thai:
         return "ISO_IR 166";
 
+      case Encoding_Korean:
+        return "ISO 2022 IR 149";
+
+      case Encoding_JapaneseKanji:
+        return "ISO 2022 IR 87";
+
+      case Encoding_SimplifiedChinese:
+        return "ISO 2022 IR 58";
+
       default:
         throw OrthancException(ErrorCode_ParameterOutOfRange);
     }
@@ -2087,6 +2159,9 @@ namespace Orthanc
 
       case ErrorCode_CreateDicomParentIsInstance:
         return HttpStatus_400_BadRequest;
+
+      case ErrorCode_UnsupportedMediaType:
+        return HttpStatus_415_UnsupportedMediaType;
 
       default:
         return HttpStatus_500_InternalServerError;

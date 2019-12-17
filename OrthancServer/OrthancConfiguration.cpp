@@ -484,8 +484,8 @@ namespace Orthanc
   }
 
 
-  bool OrthancConfiguration::GetBooleanParameter(const std::string& parameter,
-                                                 bool defaultValue) const
+  bool OrthancConfiguration::LookupBooleanParameter(bool& target,
+                                                    const std::string& parameter) const
   {
     if (json_.isMember(parameter))
     {
@@ -497,8 +497,24 @@ namespace Orthanc
       }
       else
       {
-        return json_[parameter].asBool();
+        target = json_[parameter].asBool();
+        return true;
       }
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+
+  bool OrthancConfiguration::GetBooleanParameter(const std::string& parameter,
+                                                 bool defaultValue) const
+  {
+    bool value;
+    if (LookupBooleanParameter(value, parameter))
+    {
+      return value;
     }
     else
     {
@@ -611,13 +627,13 @@ namespace Orthanc
   }
 
 
-  void OrthancConfiguration::SetupRegisteredUsers(HttpServer& httpServer) const
+  bool OrthancConfiguration::SetupRegisteredUsers(HttpServer& httpServer) const
   {
     httpServer.ClearUsers();
 
     if (!json_.isMember("RegisteredUsers"))
     {
-      return;
+      return false;
     }
 
     const Json::Value& users = json_["RegisteredUsers"];
@@ -626,13 +642,17 @@ namespace Orthanc
       throw OrthancException(ErrorCode_BadFileFormat, "Badly formatted list of users");
     }
 
+    bool hasUser = false;
     Json::Value::Members usernames = users.getMemberNames();
     for (size_t i = 0; i < usernames.size(); i++)
     {
       const std::string& username = usernames[i];
       std::string password = users[username].asString();
       httpServer.RegisterUser(username.c_str(), password.c_str());
+      hasUser = true;
     }
+
+    return hasUser;
   }
     
 
@@ -759,6 +779,8 @@ namespace Orthanc
   void OrthancConfiguration::UpdateModality(const std::string& symbolicName,
                                             const RemoteModalityParameters& modality)
   {
+    CheckAlphanumeric(symbolicName);
+    
     modalities_[symbolicName] = modality;
     SaveModalities();
   }
@@ -774,6 +796,8 @@ namespace Orthanc
   void OrthancConfiguration::UpdatePeer(const std::string& symbolicName,
                                         const WebServiceParameters& peer)
   {
+    CheckAlphanumeric(symbolicName);
+    
     peer.CheckClientCertificate();
 
     peers_[symbolicName] = peer;

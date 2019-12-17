@@ -239,13 +239,15 @@ namespace Orthanc
     done_(false),
     haveJobsChanged_(false),
     isJobsEngineUnserialized_(false),
-    metricsRegistry_(new MetricsRegistry)
+    metricsRegistry_(new MetricsRegistry),
+    isHttpServerSecure_(true),
+    isExecuteLuaEnabled_(false)
   {
     {
       OrthancConfiguration::ReaderLock lock;
 
       queryRetrieveArchive_.reset(
-        new SharedArchive(lock.GetConfiguration().GetUnsignedIntegerParameter("QueryRetrieveSize", 10)));
+        new SharedArchive(lock.GetConfiguration().GetUnsignedIntegerParameter("QueryRetrieveSize", 100)));
       mediaArchive_.reset(
         new SharedArchive(lock.GetConfiguration().GetUnsignedIntegerParameter("MediaArchiveSize", 1)));
       defaultLocalAet_ = lock.GetConfiguration().GetStringParameter("DicomAet", "ORTHANC");

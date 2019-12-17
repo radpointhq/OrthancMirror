@@ -212,26 +212,30 @@ namespace Orthanc
 
 
   void SystemToolbox::ReadFile(std::string& content,
-                               const std::string& path) 
+                               const std::string& path,
+                               bool log)
   {
     if (!IsRegularFile(path))
     {
       throw OrthancException(ErrorCode_RegularFileExpected,
-                             "The path does not point to a regular file: " + path);
+                             "The path does not point to a regular file: " + path,
+                             log);
     }
 
     boost::filesystem::ifstream f;
     f.open(path, std::ifstream::in | std::ifstream::binary);
     if (!f.good())
     {
-      throw OrthancException(ErrorCode_InexistentFile);
+      throw OrthancException(ErrorCode_InexistentFile,
+                             "File not found: " + path,
+                             log);
     }
 
     std::streamsize size = GetStreamSize(f);
     content.resize(static_cast<size_t>(size));
     if (size != 0)
     {
-      f.read(reinterpret_cast<char*>(&content[0]), size);
+      f.read(&content[0], size);
     }
 
     f.close();
@@ -274,7 +278,7 @@ namespace Orthanc
     header.resize(headerSize);
     if (headerSize != 0)
     {
-      f.read(reinterpret_cast<char*>(&header[0]), headerSize);
+      f.read(&header[0], headerSize);
     }
 
     f.close();
@@ -698,6 +702,10 @@ namespace Orthanc
     else if (extension == ".woff")
     {
       return MimeType_Woff;
+    }
+    else if (extension == ".woff2")
+    {
+      return MimeType_Woff2;
     }
 
     // Default type

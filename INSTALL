@@ -12,7 +12,7 @@ Dependencies
    (http://www.python.org/).
 
 3) Mercurial: To use the cutting edge code, a Mercurial client must be
-   installed (http://mercurial.selenic.com/). We recommand TortoiseHg.
+   installed (http://mercurial.selenic.com/). We recommend TortoiseHg.
 
 W) 7-Zip: For the native build under Windows, the 7-Zip tool is used
    to uncompress the third-party packages (http://www.7-zip.org/).
@@ -71,11 +71,12 @@ See the file "DarwinCompilation.txt".
 
 
 
-Native Windows build with Microsoft Visual Studio
--------------------------------------------------
+Native Windows build with Microsoft Visual Studio 2008
+------------------------------------------------------
 
 # cd [...]\OrthancBuild
-# cmake -DSTANDALONE_BUILD=ON -DSTATIC_BUILD=ON -DALLOW_DOWNLOADS=ON -DUSE_LEGACY_JSONCPP=ON -G "Visual Studio 9 2008" [...]\Orthanc
+# cmake -DSTANDALONE_BUILD=ON -DSTATIC_BUILD=ON -DALLOW_DOWNLOADS=ON \
+  -DUSE_LEGACY_JSONCPP=ON -G "Visual Studio 9 2008" [...]\Orthanc
 
 Then open the "[...]/OrthancBuild/Orthanc.sln" with Visual Studio.
 
@@ -91,6 +92,16 @@ NOTES:
   Visual Studio that do not support C++11
 
 
+Orthanc as compiled above will not work properly with some Asian
+encodings (unit tests will fail). In international setups, you can
+compile Orthanc together with ICU as follows:
+
+# cmake -DSTANDALONE_BUILD=ON -DSTATIC_BUILD=ON -DALLOW_DOWNLOADS=ON \
+  -DBOOST_LOCALE_BACKEND=icu -DUSE_LEGACY_JSONCPP=ON -DUSE_LEGACY_LIBICU=ON \
+  -G "Visual Studio 9 2008" [...]\Orthanc
+
+
+
 Native Windows build with Microsoft Visual Studio 2015, Ninja and QtCreator
 ---------------------------------------------------------------------------
 
@@ -103,6 +114,14 @@ Open a Visual Studio 2015 x64 Command Prompt.
 Then, you can open an existing project in QtCreator:
 * Select the CMakeLists.txt in [...]\Orthanc
 * Import build from [...]\OrthancBuild
+
+
+Instructions to include support for Asian encodings:
+
+# cmake -G Ninja -T host=x64 -DSTATIC_BUILD=ON -DBOOST_LOCALE_BACKEND=icu [...]\Orthanc
+
+The option "-T host=x64" is necessary to prevent error "C1060:
+compiler is out of heap space" when compiling Orthanc with ICU.
 
 
 
@@ -138,6 +157,6 @@ disable C++11:
         -DCMAKE_TOOLCHAIN_FILE=~/Orthanc/Resources/MinGWToolchain.cmake \
         -DSTANDALONE_BUILD=ON \
         -DSTATIC_BUILD=ON \
-        -DUSE_DCMTK_360=ON \
+        -DDCMTK_STATIC_VERSION=3.6.0 \
         -DUSE_LEGACY_JSONCPP=ON
 # make

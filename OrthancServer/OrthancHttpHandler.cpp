@@ -39,6 +39,39 @@
 
 namespace Orthanc
 {
+  bool OrthancHttpHandler::CreateChunkedRequestReader(
+    std::auto_ptr<IHttpHandler::IChunkedRequestReader>& target,
+    RequestOrigin origin,
+    const char* remoteIp,
+    const char* username,
+    HttpMethod method,
+    const UriComponents& uri,
+    const Arguments& headers)
+  {
+    if (method != HttpMethod_Post &&
+        method != HttpMethod_Put)
+    {
+      throw OrthancException(ErrorCode_InternalError);
+    }
+
+    for (Handlers::const_iterator it = handlers_.begin(); it != handlers_.end(); ++it) 
+    {
+      if ((*it)->CreateChunkedRequestReader
+          (target, origin, remoteIp, username, method, uri, headers))
+      {
+        if (target.get() == NULL)
+        {
+          throw OrthancException(ErrorCode_InternalError);
+        }
+
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+
   bool OrthancHttpHandler::Handle(HttpOutput& output,
                                   RequestOrigin origin,
                                   const char* remoteIp,
@@ -47,19 +80,19 @@ namespace Orthanc
                                   const UriComponents& uri,
                                   const Arguments& headers,
                                   const GetArguments& getArguments,
-                                  const char* bodyData,
+                                  const void* bodyData,
                                   size_t bodySize)
   {
-    bool found = false;
-
-    for (Handlers::const_iterator it = handlers_.begin(); 
-         it != handlers_.end() && !found; ++it) 
+    for (Handlers::const_iterator it = handlers_.begin(); it != handlers_.end(); ++it) 
     {
-      found = (*it)->Handle(output, origin, remoteIp, username, method, uri, 
-                            headers, getArguments, bodyData, bodySize);
+      if ((*it)->Handle(output, origin, remoteIp, username, method, uri, 
+                        headers, getArguments, bodyData, bodySize))
+      {
+        return true;
+      }
     }
 
-    return found;
+    return false;
   }
 
 

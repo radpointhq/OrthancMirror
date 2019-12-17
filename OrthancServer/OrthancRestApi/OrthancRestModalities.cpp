@@ -52,6 +52,7 @@ namespace Orthanc
 {
   static const char* const KEY_LEVEL = "Level";
   static const char* const KEY_QUERY = "Query";
+  static const char* const KEY_NORMALIZE = "Normalize";
   static const char* const KEY_RESOURCES = "Resources";
 
   
@@ -101,13 +102,11 @@ namespace Orthanc
    ***************************************************************************/
 
   static bool MergeQueryAndTemplate(DicomMap& result,
-                                    const char* postData,
-                                    size_t postSize)
+                                    const RestApiCall& call)
   {
     Json::Value query;
-    Json::Reader reader;
 
-    if (!reader.parse(postData, postData + postSize, query) ||
+    if (!call.ParseJsonRequest(query) ||
         query.type() != Json::objectValue)
     {
       return false;
@@ -131,7 +130,7 @@ namespace Orthanc
     // Only keep the filters from "fields" that are related to the patient
     DicomMap s;
     fields.ExtractPatientInformation(s);
-    connection.Find(result, ResourceType_Patient, s);
+    connection.Find(result, ResourceType_Patient, s, true /* normalize */);
   }
 
 
@@ -147,7 +146,7 @@ namespace Orthanc
     s.CopyTagIfExists(fields, DICOM_TAG_ACCESSION_NUMBER);
     s.CopyTagIfExists(fields, DICOM_TAG_MODALITIES_IN_STUDY);
 
-    connection.Find(result, ResourceType_Study, s);
+    connection.Find(result, ResourceType_Study, s, true /* normalize */);
   }
 
   static void FindSeries(DicomFindAnswers& result,
@@ -162,7 +161,7 @@ namespace Orthanc
     s.CopyTagIfExists(fields, DICOM_TAG_ACCESSION_NUMBER);
     s.CopyTagIfExists(fields, DICOM_TAG_STUDY_INSTANCE_UID);
 
-    connection.Find(result, ResourceType_Series, s);
+    connection.Find(result, ResourceType_Series, s, true /* normalize */);
   }
 
   static void FindInstance(DicomFindAnswers& result,
@@ -178,7 +177,7 @@ namespace Orthanc
     s.CopyTagIfExists(fields, DICOM_TAG_STUDY_INSTANCE_UID);
     s.CopyTagIfExists(fields, DICOM_TAG_SERIES_INSTANCE_UID);
 
-    connection.Find(result, ResourceType_Instance, s);
+    connection.Find(result, ResourceType_Instance, s, true /* normalize */);
   }
 
 
@@ -189,7 +188,7 @@ namespace Orthanc
 
     DicomMap fields;
     DicomMap::SetupFindPatientTemplate(fields);
-    if (!MergeQueryAndTemplate(fields, call.GetBodyData(), call.GetBodySize()))
+    if (!MergeQueryAndTemplate(fields, call))
     {
       return;
     }
@@ -218,7 +217,7 @@ namespace Orthanc
 
     DicomMap fields;
     DicomMap::SetupFindStudyTemplate(fields);
-    if (!MergeQueryAndTemplate(fields, call.GetBodyData(), call.GetBodySize()))
+    if (!MergeQueryAndTemplate(fields, call))
     {
       return;
     }
@@ -253,7 +252,7 @@ namespace Orthanc
 
     DicomMap fields;
     DicomMap::SetupFindSeriesTemplate(fields);
-    if (!MergeQueryAndTemplate(fields, call.GetBodyData(), call.GetBodySize()))
+    if (!MergeQueryAndTemplate(fields, call))
     {
       return;
     }
@@ -289,7 +288,7 @@ namespace Orthanc
 
     DicomMap fields;
     DicomMap::SetupFindInstanceTemplate(fields);
-    if (!MergeQueryAndTemplate(fields, call.GetBodyData(), call.GetBodySize()))
+    if (!MergeQueryAndTemplate(fields, call))
     {
       return;
     }
@@ -339,7 +338,7 @@ namespace Orthanc
 
     DicomMap m;
     DicomMap::SetupFindPatientTemplate(m);
-    if (!MergeQueryAndTemplate(m, call.GetBodyData(), call.GetBodySize()))
+    if (!MergeQueryAndTemplate(m, call))
     {
       return;
     }
@@ -362,7 +361,7 @@ namespace Orthanc
       patients.ToJson(patient, i, true);
 
       DicomMap::SetupFindStudyTemplate(m);
-      if (!MergeQueryAndTemplate(m, call.GetBodyData(), call.GetBodySize()))
+      if (!MergeQueryAndTemplate(m, call))
       {
         return;
       }
@@ -381,7 +380,7 @@ namespace Orthanc
         studies.ToJson(study, j, true);
 
         DicomMap::SetupFindSeriesTemplate(m);
-        if (!MergeQueryAndTemplate(m, call.GetBodyData(), call.GetBodySize()))
+        if (!MergeQueryAndTemplate(m, call))
         {
           return;
         }
@@ -442,13 +441,33 @@ namespace Orthanc
     ServerContext& context = OrthancRestApi::GetContext(call);
     Json::Value request;
 
-    if (call.ParseJsonRequest(request) &&
-        request.type() == Json::objectValue &&
-        request.isMember(KEY_LEVEL) && request[KEY_LEVEL].type() == Json::stringValue &&
-        (!request.isMember(KEY_QUERY) || request[KEY_QUERY].type() == Json::objectValue))
+    if (!call.ParseJsonRequest(request) ||
+        request.type() != Json::objectValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat, "Must provide a JSON object");
+    }
+    else if (!request.isMember(KEY_LEVEL) ||
+             request[KEY_LEVEL].type() != Json::stringValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat,
+                             "The JSON body must contain field " + std::string(KEY_LEVEL));
+    }
+    else if (request.isMember(KEY_NORMALIZE) &&
+             request[KEY_NORMALIZE].type() != Json::booleanValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat,
+                             "The field " + std::string(KEY_NORMALIZE) + " must contain a Boolean");
+    }
+    else if (request.isMember(KEY_QUERY) &&
+             request[KEY_QUERY].type() != Json::objectValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat,
+                             "The field " + std::string(KEY_QUERY) + " must contain a JSON object");
+    }
+    else
     {
       std::auto_ptr<QueryRetrieveHandler>  handler(new QueryRetrieveHandler(context));
-
+      
       handler->SetModality(call.GetUriComponent("id", ""));
       handler->SetLevel(StringToResourceType(request[KEY_LEVEL].asCString()));
 
@@ -462,6 +481,11 @@ namespace Orthanc
         {
           handler->SetQuery(it->first, it->second);
         }
+      }
+
+      if (request.isMember(KEY_NORMALIZE))
+      {
+        handler->SetFindNormalized(request[KEY_NORMALIZE].asBool());
       }
 
       AnswerQueryHandler(call, handler);
@@ -758,6 +782,7 @@ namespace Orthanc
       }
       else
       {
+        handler->SetFindNormalized(parent.GetHandler().IsFindNormalized());
         handler->SetModality(parent.GetHandler().GetModalitySymbolicName());
         handler->SetLevel(CHILDREN_LEVEL);
 
@@ -900,6 +925,8 @@ namespace Orthanc
                                "This string is not a valid Orthanc identifier: " + stripped);
       }
 
+      job.AddParentResource(stripped);  // New in Orthanc 1.5.7
+      
       context.AddChildInstances(job, stripped);
 
       if (logExportedResources)
@@ -958,7 +985,8 @@ namespace Orthanc
         request[KEY_RESOURCES].type() != Json::arrayValue ||
         request[KEY_LEVEL].type() != Json::stringValue)
     {
-      throw OrthancException(ErrorCode_BadFileFormat);
+      throw OrthancException(ErrorCode_BadFileFormat, "Must provide a JSON body containing fields " +
+                             std::string(KEY_RESOURCES) + " and " + std::string(KEY_LEVEL));
     }
 
     ResourceType level = StringToResourceType(request[KEY_LEVEL].asCString());
@@ -1139,8 +1167,7 @@ namespace Orthanc
     ServerContext& context = OrthancRestApi::GetContext(call);
 
     Json::Value json;
-    Json::Reader reader;
-    if (reader.parse(call.GetBodyData(), call.GetBodyData() + call.GetBodySize(), json))
+    if (call.ParseJsonRequest(json))
     {
       RemoteModalityParameters modality;
       modality.Unserialize(json);
@@ -1177,8 +1204,7 @@ namespace Orthanc
     ServerContext& context = OrthancRestApi::GetContext(call);
 
     Json::Value json;
-    Json::Reader reader;
-    if (reader.parse(call.GetBodyData(), call.GetBodyData() + call.GetBodySize(), json))
+    if (call.ParseJsonRequest(json))
     {
       WebServiceParameters peer;
       peer.Unserialize(json);
@@ -1235,6 +1261,10 @@ namespace Orthanc
       Json::Value result;
       answers.ToJson(result, true);
       call.GetOutput().AnswerJson(result);
+    }
+    else
+    {
+      throw OrthancException(ErrorCode_BadFileFormat, "Must provide a JSON object");
     }
   }
 

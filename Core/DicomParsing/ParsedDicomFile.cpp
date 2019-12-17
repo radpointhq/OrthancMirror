@@ -645,7 +645,10 @@ namespace Orthanc
     }
 
     InvalidateCache();
-    std::auto_ptr<DcmElement> element(FromDcmtkBridge::FromJson(tag, value, decodeDataUriScheme, GetEncoding()));
+
+    bool hasCodeExtensions;
+    Encoding encoding = DetectEncoding(hasCodeExtensions);
+    std::auto_ptr<DcmElement> element(FromDcmtkBridge::FromJson(tag, value, decodeDataUriScheme, encoding));
     InsertInternal(*pimpl_->file_->getDataset(), element.release());
   }
 
@@ -706,8 +709,9 @@ namespace Orthanc
     }
     else
     {
-      Encoding encoding = GetEncoding();
-      if (GetEncoding() != Encoding_Utf8)
+      bool hasCodeExtensions;
+      Encoding encoding = DetectEncoding(hasCodeExtensions);
+      if (encoding != Encoding_Utf8)
       {
         binary = Toolbox::ConvertFromUtf8(utf8Value, encoding);
         decoded = &binary;
@@ -766,7 +770,13 @@ namespace Orthanc
       }
 
       std::auto_ptr<DcmElement> element(FromDcmtkBridge::CreateElementForTag(tag));
-      FromDcmtkBridge::FillElementWithString(*element, tag, utf8Value, decodeDataUriScheme, GetEncoding());
+
+      if (!utf8Value.empty())
+      {
+        bool hasCodeExtensions;
+        Encoding encoding = DetectEncoding(hasCodeExtensions);
+        FromDcmtkBridge::FillElementWithString(*element, tag, utf8Value, decodeDataUriScheme, encoding);
+      }
 
       InsertInternal(dicom, element.release());
       UpdateStorageUid(tag, utf8Value, false);
@@ -805,7 +815,9 @@ namespace Orthanc
         }
       }
 
-      InsertInternal(dicom, FromDcmtkBridge::FromJson(tag, value, decodeDataUriScheme, GetEncoding()));
+      bool hasCodeExtensions;
+      Encoding encoding = DetectEncoding(hasCodeExtensions);
+      InsertInternal(dicom, FromDcmtkBridge::FromJson(tag, value, decodeDataUriScheme, encoding));
 
       if (tag == DICOM_TAG_SOP_CLASS_UID ||
           tag == DICOM_TAG_SOP_INSTANCE_UID)
@@ -875,10 +887,13 @@ namespace Orthanc
         return false;
       }
 
+      bool hasCodeExtensions;
+      Encoding encoding = DetectEncoding(hasCodeExtensions);
+      
       std::set<DicomTag> tmp;
       std::auto_ptr<DicomValue> v(FromDcmtkBridge::ConvertLeafElement
                                   (*element, DicomToJsonFlags_Default, 
-                                   0, GetEncoding(), tmp));
+                                   0, encoding, hasCodeExtensions, tmp));
       
       if (v.get() == NULL ||
           v->IsNull())
@@ -900,12 +915,23 @@ namespace Orthanc
   {
     std::string patientId, studyUid, seriesUid, instanceUid;
 
-    if (!GetTagValue(patientId, DICOM_TAG_PATIENT_ID) ||
-        !GetTagValue(studyUid, DICOM_TAG_STUDY_INSTANCE_UID) ||
+    if (!GetTagValue(patientId, DICOM_TAG_PATIENT_ID))
+    {
+      /**
+       * If "PatientID" is absent, be tolerant by considering it
+       * equals the empty string, then proceed. In Orthanc <= 1.5.6,
+       * an exception "Bad file format" was generated.
+       * https://groups.google.com/d/msg/orthanc-users/aphG_h1AHVg/rfOTtTPTAgAJ
+       * https://bitbucket.org/sjodogne/orthanc/commits/4c45e018bd3de3cfa21d6efc6734673aaaee4435
+       **/
+      patientId.clear();
+    }        
+    
+    if (!GetTagValue(studyUid, DICOM_TAG_STUDY_INSTANCE_UID) ||
         !GetTagValue(seriesUid, DICOM_TAG_SERIES_INSTANCE_UID) ||
         !GetTagValue(instanceUid, DICOM_TAG_SOP_INSTANCE_UID))
     {
-      throw OrthancException(ErrorCode_BadFileFormat);
+      throw OrthancException(ErrorCode_BadFileFormat, "missing StudyInstanceUID, SeriesInstanceUID or SOPInstanceUID");
     }
 
     return DicomInstanceHasher(patientId, studyUid, seriesUid, instanceUid);
@@ -944,7 +970,8 @@ namespace Orthanc
 
 
   void ParsedDicomFile::CreateFromDicomMap(const DicomMap& source,
-                                           Encoding defaultEncoding)
+                                           Encoding defaultEncoding,
+                                           bool permissive)
   {
     pimpl_->file_.reset(new DcmFileFormat);
 
@@ -986,24 +1013,28 @@ namespace Orthanc
       if (it->first != DICOM_TAG_SPECIFIC_CHARACTER_SET &&
           !it->second->IsNull())
       {
-        ReplacePlainString(it->first, it->second->GetContent());
+        try
+        {
+          ReplacePlainString(it->first, it->second->GetContent());
+        }
+        catch (OrthancException&)
+        {
+          if (!permissive)
+          {
+            throw;
+          }
+        }
       }
     }
   }
 
 
   ParsedDicomFile::ParsedDicomFile(const DicomMap& map,
-                                   Encoding defaultEncoding) :
+                                   Encoding defaultEncoding,
+                                   bool permissive) :
     pimpl_(new PImpl)
   {
-    CreateFromDicomMap(map, defaultEncoding);
-  }
-
-
-  ParsedDicomFile::ParsedDicomFile(const DicomMap& map) : 
-    pimpl_(new PImpl)
-  {
-    CreateFromDicomMap(map, GetDefaultDicomEncoding());
+    CreateFromDicomMap(map, defaultEncoding, permissive);
   }
 
 
@@ -1294,9 +1325,10 @@ namespace Orthanc
   }
 
   
-  Encoding ParsedDicomFile::GetEncoding() const
+  Encoding ParsedDicomFile::DetectEncoding(bool& hasCodeExtensions) const
   {
-    return FromDcmtkBridge::DetectEncoding(*pimpl_->file_->getDataset(),
+    return FromDcmtkBridge::DetectEncoding(hasCodeExtensions,
+                                           *pimpl_->file_->getDataset(),
                                            GetDefaultDicomEncoding());
   }
 
@@ -1532,12 +1564,13 @@ namespace Orthanc
 
   void ParsedDicomFile::ChangeEncoding(Encoding target)
   {
-    Encoding source = GetEncoding();
+    bool hasCodeExtensions;
+    Encoding source = DetectEncoding(hasCodeExtensions);
 
     if (source != target)  // Avoid unnecessary conversion
     {
       ReplacePlainString(DICOM_TAG_SPECIFIC_CHARACTER_SET, GetDicomSpecificCharacterSet(target));
-      FromDcmtkBridge::ChangeStringEncoding(*pimpl_->file_->getDataset(), source, target);
+      FromDcmtkBridge::ChangeStringEncoding(*pimpl_->file_->getDataset(), source, hasCodeExtensions, target);
     }
   }
 

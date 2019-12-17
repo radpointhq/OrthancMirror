@@ -1,6 +1,136 @@
 Pending changes in the mainline
 ===============================
 
+REST API
+--------
+
+* API version has been upgraded to 4
+* in /ordered-slices route, ignore instances without position/normal/seriesIndex
+  unless there are only such instances in the series.
+
+
+Maintenance
+-----------
+
+* Security: If remote access is enabled, HTTP authentication is also
+  enabled by default. This modification was done to mitigate security
+  risks reported by independant security researcher Amitay Dan.
+* Security: New configuration option "ExecuteLuaEnabled" to allow "/tools/execute-script"
+* New configuration option: "HttpRequestTimeout"
+* Log an explicit error if uploading an empty DICOM file using REST API
+* Name of temporary files now include the process ID to ease design of scripts cleaning /tmp
+* Fix compatibility of LSB binaries with Ubuntu >= 18.04
+* Fix generation of "SOP Instance UID" on split and merge
+* Orthanc Explorer: include the URL search params into HTTP headers to
+  the REST API to ease usage of the Authorization plugin. Note that
+  only the 'token', 'auth-token' & 'authorization' search params are
+  transmitted into HTTP headers.
+* Fix lost relationships between CT and RT-STRUCT during anonymization
+
+Version 1.5.7 (2019-06-25)
+==========================
+
+REST API
+--------
+
+* API version has been upgraded to 3
+* "/modalities/{id}/query": New argument "Normalize" can be set to "false"
+  to bypass the automated correction of outgoing C-FIND queries
+* Reporting of "ParentResources" in "DicomModalityStore" and "DicomModalityStore" jobs
+
+Plugins
+-------
+
+* New functions in the SDK:
+  - OrthancPluginHttpClientChunkedBody(): HTTP client for POST/PUT with a chunked body
+  - OrthancPluginRegisterMultipartRestCallback(): HTTP server for POST/PUT with multipart body
+  - OrthancPluginGetTagName(): Retrieve the name of a DICOM tag from its group and element
+
+Maintenance
+-----------
+
+* Orthanc now accepts "-H 'Transfer-Encoding: chunked'" option from curl
+* Size of the Orthanc static binaries are reduced by compressing ICU data
+* Anonymization: Preserve hierarchical relationships in (0008,1115) [] (0020,000e)
+* Allow the serialization of signed 16bpp images in PAM format
+* HTTP header "Accept-Encoding" is honored for streams without built-in support for compression
+* The default HTTP timeout is now 60 seconds (instead of 10 seconds in previous versions)
+* Allow anonymizing/modifying instances without the PatientID tag
+* Fix issue #106 (Unable to export preview as jpeg from Lua script)
+* Fix issue #136 (C-FIND request fails when found DICOM file does not have certain tags)
+* Fix issue #137 (C-STORE fails for unknown SOP Class although server is configured to accept any)
+* Fix issue #138 (POST to modalities/{name} accepts invalid characters)
+* Fix issue #141 (/tools/create-dicom removes non-ASCII characters from study description)
+
+
+Version 1.5.6 (2019-03-01)
+==========================
+
+Orthanc Explorer
+----------------
+
+* If performing a Query/Retrieve operation, the default value for the
+  tags is set to an empty string instead of '*', which allows to match
+  even if the tag is not present. This allows malformed DICOM files to
+  be matched, even though they lack required tags such as "PatientSex"
+
+Maintenance
+-----------
+
+* Enlarge the support of JSON-to-XML conversion in the REST API
+* Fix missing DB transactions in some write operations
+* Fix performance issue in DICOM protocol by disabling Nagle's algorithm
+
+
+Version 1.5.5 (2019-02-25)
+==========================
+
+General
+-------
+
+* Support of the following multi-byte specific character sets:
+  - Japanese Kanji (ISO 2022 IR 87)
+  - Korean (ISO 2022 IR 149)
+  - Simplified Chinese (ISO 2022 IR 58)
+* Basic support for character sets with code extensions (ISO 2022 escape sequences)
+
+REST API
+--------
+
+* API version has been upgraded to 2
+* "DicomMoveScu" jobs provide the associated C-FIND answer in their "Query" public field
+
+Plugins
+-------
+
+* Separation of ideographic and phonetic characters in DICOMweb JSON and XML
+
+Maintenance
+-----------
+
+* Accept SOP classes: BreastProjectionXRayImageStorageForProcessing/Presentation
+* More tolerance wrt. missing DICOM tags that must be returned by Orthanc C-FIND SCP
+* Orthanc now interprets the "DCMDICTPATH" environment variable the same way as DCMTK
+* New CMake option: "-DMSVC_MULTIPLE_PROCESSES=ON" for parallel build with Visual Studio
+* Fix issue #126 (Orthanc and DCMDICTPATH)
+* Fix issue #131 (C-MOVE failure due to duplicate StudyInstanceUID in the database)
+* Fix issue #134 (/patient/modify gives 500, should really be 400)
+* Upgraded dependencies for static builds (notably on Windows):
+  - boost 1.69.0
+  - curl 1.64.0
+  - dcmtk 3.6.4
+  - e2fsprogs 1.44.5 (libuuid)
+  - googletest 1.8.1
+  - libjpeg 9c
+  - libpng 1.6.36
+  - openssl 1.0.2p
+  - pugixml 1.9
+  - sqlite amalgamation 3.27.1
+
+
+Version 1.5.4 (2019-02-08)
+==========================
+
 General
 -------
 
@@ -27,7 +157,6 @@ Plugins
   - OrthancPluginRegisterRefreshMetricsCallback() to ask to refresh metrics
   - OrthancPluginEncodeDicomWebJson() to convert DICOM to "application/dicom+json"
   - OrthancPluginEncodeDicomWebXml() to convert DICOM to "application/dicom+xml"
-* New function: 
 * New extensions in the database SDK: LookupResourceAndParent and GetAllMetadata
 
 Maintenance

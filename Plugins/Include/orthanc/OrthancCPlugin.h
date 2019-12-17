@@ -25,6 +25,7 @@
  *    - Possibly register a callback to filter incoming HTTP requests using OrthancPluginRegisterIncomingHttpRequestFilter2().
  *    - Possibly register a callback to unserialize jobs using OrthancPluginRegisterJobsUnserializer().
  *    - Possibly register a callback to refresh its metrics using OrthancPluginRegisterRefreshMetricsCallback().
+ *    - Possibly register a callback to answer chunked HTTP transfers using ::OrthancPluginRegisterChunkedRestCallback().
  * -# <tt>void OrthancPluginFinalize()</tt>:
  *    This function is invoked by Orthanc during its shutdown. The plugin
  *    must free all its memory.
@@ -113,14 +114,16 @@
 #include <string.h>
 
 #ifdef WIN32
-#define ORTHANC_PLUGINS_API __declspec(dllexport)
+#  define ORTHANC_PLUGINS_API __declspec(dllexport)
+#elif __GNUC__ >= 4
+#  define ORTHANC_PLUGINS_API __attribute__ ((visibility ("default")))
 #else
-#define ORTHANC_PLUGINS_API
+#  define ORTHANC_PLUGINS_API
 #endif
 
 #define ORTHANC_PLUGINS_MINIMAL_MAJOR_NUMBER     1
 #define ORTHANC_PLUGINS_MINIMAL_MINOR_NUMBER     5
-#define ORTHANC_PLUGINS_MINIMAL_REVISION_NUMBER  4
+#define ORTHANC_PLUGINS_MINIMAL_REVISION_NUMBER  7
 
 
 #if !defined(ORTHANC_PLUGINS_VERSION_IS_ABOVE)
@@ -175,7 +178,7 @@
 /**
  * For Microsoft Visual Studio, a compatibility "stdint.h" can be
  * downloaded at the following URL:
- * https://orthanc.googlecode.com/hg/Resources/ThirdParty/VisualStudio/stdint.h
+ * https://bitbucket.org/sjodogne/orthanc/raw/default/Resources/ThirdParty/VisualStudio/stdint.h
  **/
 #include <stdint.h>
 
@@ -238,6 +241,7 @@ extern "C"
     OrthancPluginErrorCode_NullPointer = 35    /*!< Cannot handle a NULL pointer */,
     OrthancPluginErrorCode_DatabaseUnavailable = 36    /*!< The database is currently not available (probably a transient situation) */,
     OrthancPluginErrorCode_CanceledJob = 37    /*!< This job was canceled */,
+    OrthancPluginErrorCode_BadGeometry = 38    /*!< Geometry error encountered in Stone */,
     OrthancPluginErrorCode_SQLiteNotOpened = 1000    /*!< SQLite: The database is not opened */,
     OrthancPluginErrorCode_SQLiteAlreadyOpened = 1001    /*!< SQLite: Connection is already open */,
     OrthancPluginErrorCode_SQLiteCannotOpen = 1002    /*!< SQLite: Unable to open the database */,
@@ -297,6 +301,7 @@ extern "C"
     OrthancPluginErrorCode_CannotOrderSlices = 2040    /*!< Unable to order the slices of the series */,
     OrthancPluginErrorCode_NoWorklistHandler = 2041    /*!< No request handler factory for DICOM C-Find Modality SCP */,
     OrthancPluginErrorCode_AlreadyExistingTag = 2042    /*!< Cannot override the value of a tag that already exists */,
+    OrthancPluginErrorCode_UnsupportedMediaType = 3000    /*!< Unsupported media type */,
 
     _OrthancPluginErrorCode_INTERNAL = 0x7fffffff
   } OrthancPluginErrorCode;
@@ -332,7 +337,7 @@ extern "C"
     /**
      * @brief The HTTP method.
      **/
-    OrthancPluginHttpMethod method;    
+    OrthancPluginHttpMethod method;
 
     /**
      * @brief The number of groups of the regular expression.
@@ -362,7 +367,7 @@ extern "C"
     /**
      * @brief For a PUT or POST request, the content of the body.
      **/
-    const char*             body;
+    const void*             body;
 
     /**
      * @brief For a PUT or POST request, the number of bytes of the body.
@@ -428,6 +433,8 @@ extern "C"
     _OrthancPluginService_SetMetricsValue = 31,
     _OrthancPluginService_EncodeDicomWebJson = 32,
     _OrthancPluginService_EncodeDicomWebXml = 33,
+    _OrthancPluginService_ChunkedHttpClient = 34,   /* New in Orthanc 1.5.7 */
+    _OrthancPluginService_GetTagName = 35,   /* New in Orthanc 1.5.7 */
     
     /* Registration of callbacks */
     _OrthancPluginService_RegisterRestCallback = 1000,
@@ -442,6 +449,7 @@ extern "C"
     _OrthancPluginService_RegisterMoveCallback = 1009,
     _OrthancPluginService_RegisterIncomingHttpRequestFilter2 = 1010,
     _OrthancPluginService_RegisterRefreshMetricsCallback = 1011,
+    _OrthancPluginService_RegisterChunkedRestCallback = 1012,  /* New in Orthanc 1.5.7 */
 
     /* Sending answers to REST calls */
     _OrthancPluginService_AnswerBuffer = 2000,
@@ -1907,7 +1915,7 @@ extern "C"
   typedef struct
   {
     OrthancPluginRestOutput* output;
-    const char*              answer;
+    const void*              answer;
     uint32_t                 answerSize;
     const char*              mimeType;
   } _OrthancPluginAnswerBuffer;
@@ -1927,7 +1935,7 @@ extern "C"
   ORTHANC_PLUGIN_INLINE void OrthancPluginAnswerBuffer(
     OrthancPluginContext*    context,
     OrthancPluginRestOutput* output,
-    const char*              answer,
+    const void*              answer,
     uint32_t                 answerSize,
     const char*              mimeType)
   {
@@ -2102,7 +2110,7 @@ extern "C"
   {
     OrthancPluginMemoryBuffer*  target;
     const char*                 uri;
-    const char*                 body;
+    const void*                 body;
     uint32_t                    bodySize;
   } _OrthancPluginRestApiPostPut;
 
@@ -2126,7 +2134,7 @@ extern "C"
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 uri,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize)
   {
     _OrthancPluginRestApiPostPut params;
@@ -2161,7 +2169,7 @@ extern "C"
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 uri,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize)
   {
     _OrthancPluginRestApiPostPut params;
@@ -2238,7 +2246,7 @@ extern "C"
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 uri,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize)
   {
     _OrthancPluginRestApiPostPut params;
@@ -2274,7 +2282,7 @@ extern "C"
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 uri,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize)
   {
     _OrthancPluginRestApiPostPut params;
@@ -4029,7 +4037,7 @@ extern "C"
     const char*                 url;
     const char*                 username;
     const char*                 password;
-    const char*                 body;
+    const void*                 body;
     uint32_t                    bodySize;
   } _OrthancPluginCallHttpClient;
 
@@ -4048,6 +4056,7 @@ extern "C"
    * @param username The username (can be <tt>NULL</tt> if no password protection).
    * @param password The password (can be <tt>NULL</tt> if no password protection).
    * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
    **/
   ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginHttpGet(
     OrthancPluginContext*       context,
@@ -4085,12 +4094,13 @@ extern "C"
    * @param username The username (can be <tt>NULL</tt> if no password protection).
    * @param password The password (can be <tt>NULL</tt> if no password protection).
    * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
    **/
   ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginHttpPost(
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 url,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize,
     const char*                 username,
     const char*                 password)
@@ -4126,12 +4136,13 @@ extern "C"
    * @param username The username (can be <tt>NULL</tt> if no password protection).
    * @param password The password (can be <tt>NULL</tt> if no password protection).
    * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
    **/
   ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginHttpPut(
     OrthancPluginContext*       context,
     OrthancPluginMemoryBuffer*  target,
     const char*                 url,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize,
     const char*                 username,
     const char*                 password)
@@ -4163,6 +4174,7 @@ extern "C"
    * @param username The username (can be <tt>NULL</tt> if no password protection).
    * @param password The password (can be <tt>NULL</tt> if no password protection).
    * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
    **/
   ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginHttpDelete(
     OrthancPluginContext*       context,
@@ -5482,7 +5494,7 @@ extern "C"
     uint32_t                    headersCount;
     const char* const*          headersKeys;
     const char* const*          headersValues;
-    const char*                 body;
+    const void*                 body;
     uint32_t                    bodySize;
     const char*                 username;
     const char*                 password;
@@ -5532,6 +5544,7 @@ extern "C"
    * @param pkcs11 Enable PKCS#11 client authentication for hardware security modules and smart cards.
    * @return 0 if success, or the error code if failure.
    * @see OrthancPluginCallPeerApi()
+   * @ingroup Toolbox
    **/
   ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginHttpClient(
     OrthancPluginContext*       context,
@@ -5543,7 +5556,7 @@ extern "C"
     uint32_t                    headersCount,
     const char* const*          headersKeys,
     const char* const*          headersValues,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize,
     const char*                 username,
     const char*                 password,
@@ -5868,7 +5881,7 @@ extern "C"
    * @param context The Orthanc plugin context, as received by OrthancPluginInitialize().
    * @param callback The main callback.
    * @param getMoveSize Callback to read the number of C-Move suboperations.
-   * @param applyMove Callback to apply one C-Move suboperations.
+   * @param applyMove Callback to apply one C-Move suboperation.
    * @param freeMove Callback to free the C-Move driver.
    * @return 0 if success, other value if error.
    * @ingroup DicomCallbacks
@@ -6292,7 +6305,7 @@ extern "C"
     uint32_t                    additionalHeadersCount;
     const char* const*          additionalHeadersKeys;
     const char* const*          additionalHeadersValues;
-    const char*                 body;
+    const void*                 body;
     uint32_t                    bodySize;
     uint32_t                    timeout;
   } _OrthancPluginCallPeerApi;
@@ -6344,7 +6357,7 @@ extern "C"
     uint32_t                    additionalHeadersCount,
     const char* const*          additionalHeadersKeys,
     const char* const*          additionalHeadersValues,
-    const char*                 body,
+    const void*                 body,
     uint32_t                    bodySize,
     uint32_t                    timeout)
   {
@@ -6793,6 +6806,451 @@ extern "C"
   }
   
 
+
+  /**
+   * @brief Callback executed when a HTTP header is received during a chunked transfer.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, as soon as it
+   * receives one HTTP header from the answer of the remote HTTP
+   * server.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param answer The user payload, as provided by the calling plugin.
+   * @param key The key of the HTTP header.
+   * @param value The value of the HTTP header.
+   * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginChunkedClientAnswerAddHeader) (
+    void* answer,
+    const char* key,
+    const char* value);
+
+
+  /**
+   * @brief Callback executed when an answer chunk is received during a chunked transfer.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, as soon as it
+   * receives one data chunk from the answer of the remote HTTP
+   * server.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param answer The user payload, as provided by the calling plugin.
+   * @param data The content of the data chunk.
+   * @param size The size of the data chunk.
+   * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginChunkedClientAnswerAddChunk) (
+    void* answer,
+    const void* data,
+    uint32_t size);
+  
+
+  /**
+   * @brief Callback to know whether the request body is entirely read during a chunked transfer 
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, while reading
+   * the body of a POST or PUT request. The plugin must answer "1" as
+   * soon as the body is entirely read: The "request" data structure
+   * must act as an iterator.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param request The user payload, as provided by the calling plugin.
+   * @return "1" if the body is over, or "0" if there is still data to be read.
+   * @ingroup Toolbox
+   **/
+  typedef uint8_t (*OrthancPluginChunkedClientRequestIsDone) (void* request);
+
+
+  /**
+   * @brief Callback to advance in the request body during a chunked transfer 
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, while reading
+   * the body of a POST or PUT request. This function asks the plugin
+   * to advance to the next chunk of data of the request body: The
+   * "request" data structure must act as an iterator.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param request The user payload, as provided by the calling plugin.
+   * @return 0 if success, or the error code if failure.
+   * @ingroup Toolbox
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginChunkedClientRequestNext) (void* request);
+
+
+  /**
+   * @brief Callback to read the current chunk of the request body during a chunked transfer 
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, while reading
+   * the body of a POST or PUT request. The plugin must provide the
+   * content of the current chunk of data of the request body.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param request The user payload, as provided by the calling plugin.
+   * @return The content of the current request chunk.
+   * @ingroup Toolbox
+   **/
+  typedef const void* (*OrthancPluginChunkedClientRequestGetChunkData) (void* request);
+
+
+  /**
+   * @brief Callback to read the size of the current request chunk during a chunked transfer 
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP client during a chunked HTTP transfer, while reading
+   * the body of a POST or PUT request. The plugin must provide the
+   * size of the current chunk of data of the request body.
+   *
+   * @see OrthancPluginChunkedHttpClient()
+   * @param request The user payload, as provided by the calling plugin.
+   * @return The size of the current request chunk.
+   * @ingroup Toolbox
+   **/
+  typedef uint32_t (*OrthancPluginChunkedClientRequestGetChunkSize) (void* request);
+
+  
+  typedef struct
+  {
+    void*                                          answer;
+    OrthancPluginChunkedClientAnswerAddChunk       answerAddChunk;
+    OrthancPluginChunkedClientAnswerAddHeader      answerAddHeader;
+    uint16_t*                                      httpStatus;
+    OrthancPluginHttpMethod                        method;
+    const char*                                    url;
+    uint32_t                                       headersCount;
+    const char* const*                             headersKeys;
+    const char* const*                             headersValues;
+    void*                                          request;
+    OrthancPluginChunkedClientRequestIsDone        requestIsDone;
+    OrthancPluginChunkedClientRequestGetChunkData  requestChunkData;
+    OrthancPluginChunkedClientRequestGetChunkSize  requestChunkSize;
+    OrthancPluginChunkedClientRequestNext          requestNext;
+    const char*                                    username;
+    const char*                                    password;
+    uint32_t                                       timeout;
+    const char*                                    certificateFile;
+    const char*                                    certificateKeyFile;
+    const char*                                    certificateKeyPassword;
+    uint8_t                                        pkcs11;
+  } _OrthancPluginChunkedHttpClient;
+
+  
+  /**
+   * @brief Issue a HTTP call, using chunked HTTP transfers.
+   * 
+   * Make a HTTP call to the given URL using chunked HTTP
+   * transfers. The request body is provided as an iterator over data
+   * chunks. The answer is provided as a sequence of function calls
+   * with the individual HTTP headers and answer chunks.
+   * 
+   * Contrarily to OrthancPluginHttpClient() that entirely stores the
+   * request body and the answer body in memory buffers, this function
+   * uses chunked HTTP transfers. This results in a lower memory
+   * consumption. Pay attention to the fact that Orthanc servers with
+   * version <= 1.5.6 do not support chunked transfers: You must use
+   * OrthancPluginHttpClient() if contacting such older servers.
+   *
+   * The HTTP request will be done accordingly to the global
+   * configuration of Orthanc (in particular, the options "HttpProxy",
+   * "HttpTimeout", "HttpsVerifyPeers", "HttpsCACertificates", and
+   * "Pkcs11" will be taken into account).
+   * 
+   * @param context The Orthanc plugin context, as received by OrthancPluginInitialize().
+   * @param answer The user payload for the answer body. It will be provided to the callbacks for the answer.
+   * @param answerAddChunk Callback function to report a data chunk from the answer body.
+   * @param answerAddHeader Callback function to report an HTTP header sent by the remote server.
+   * @param httpStatus The HTTP status after the execution of the request (out argument).
+   * @param method HTTP method to be used.
+   * @param url The URL of interest.
+   * @param headersCount The number of HTTP headers.
+   * @param headersKeys Array containing the keys of the HTTP headers (can be <tt>NULL</tt> if no header).
+   * @param headersValues Array containing the values of the HTTP headers (can be <tt>NULL</tt> if no header).
+   * @param request The user payload containing the request body, and acting as an iterator.
+   * It will be provided to the callbacks for the request.
+   * @param requestIsDone Callback function to tell whether the request body is entirely read.
+   * @param requestChunkData Callback function to get the content of the current data chunk of the request body.
+   * @param requestChunkSize Callback function to get the size of the current data chunk of the request body.
+   * @param requestNext Callback function to advance to the next data chunk of the request body.
+   * @param username The username (can be <tt>NULL</tt> if no password protection).
+   * @param password The password (can be <tt>NULL</tt> if no password protection).
+   * @param timeout Timeout in seconds (0 for default timeout).
+   * @param certificateFile Path to the client certificate for HTTPS, in PEM format
+   * (can be <tt>NULL</tt> if no client certificate or if not using HTTPS).
+   * @param certificateKeyFile Path to the key of the client certificate for HTTPS, in PEM format
+   * (can be <tt>NULL</tt> if no client certificate or if not using HTTPS).
+   * @param certificateKeyPassword Password to unlock the key of the client certificate 
+   * (can be <tt>NULL</tt> if no client certificate or if not using HTTPS).
+   * @param pkcs11 Enable PKCS#11 client authentication for hardware security modules and smart cards.
+   * @return 0 if success, or the error code if failure.
+   * @see OrthancPluginHttpClient()
+   * @ingroup Toolbox
+   **/
+  ORTHANC_PLUGIN_INLINE OrthancPluginErrorCode  OrthancPluginChunkedHttpClient(
+    OrthancPluginContext*                          context,
+    void*                                          answer,
+    OrthancPluginChunkedClientAnswerAddChunk       answerAddChunk,
+    OrthancPluginChunkedClientAnswerAddHeader      answerAddHeader,
+    uint16_t*                                      httpStatus,
+    OrthancPluginHttpMethod                        method,
+    const char*                                    url,
+    uint32_t                                       headersCount,
+    const char* const*                             headersKeys,
+    const char* const*                             headersValues,
+    void*                                          request,
+    OrthancPluginChunkedClientRequestIsDone        requestIsDone,
+    OrthancPluginChunkedClientRequestGetChunkData  requestChunkData,
+    OrthancPluginChunkedClientRequestGetChunkSize  requestChunkSize,
+    OrthancPluginChunkedClientRequestNext          requestNext,
+    const char*                                    username,
+    const char*                                    password,
+    uint32_t                                       timeout,
+    const char*                                    certificateFile,
+    const char*                                    certificateKeyFile,
+    const char*                                    certificateKeyPassword,
+    uint8_t                                        pkcs11)
+  {
+    _OrthancPluginChunkedHttpClient params;
+    memset(&params, 0, sizeof(params));
+
+    /* In common with OrthancPluginHttpClient() */
+    params.httpStatus = httpStatus;
+    params.method = method;
+    params.url = url;
+    params.headersCount = headersCount;
+    params.headersKeys = headersKeys;
+    params.headersValues = headersValues;
+    params.username = username;
+    params.password = password;
+    params.timeout = timeout;
+    params.certificateFile = certificateFile;
+    params.certificateKeyFile = certificateKeyFile;
+    params.certificateKeyPassword = certificateKeyPassword;
+    params.pkcs11 = pkcs11;
+
+    /* For chunked body/answer */
+    params.answer = answer;
+    params.answerAddChunk = answerAddChunk;
+    params.answerAddHeader = answerAddHeader;
+    params.request = request;
+    params.requestIsDone = requestIsDone;
+    params.requestChunkData = requestChunkData;
+    params.requestChunkSize = requestChunkSize;
+    params.requestNext = requestNext;
+
+    return context->InvokeService(context, _OrthancPluginService_ChunkedHttpClient, &params);
+  }
+
+
+
+  /**
+   * @brief Opaque structure that reads the content of a HTTP request body during a chunked HTTP transfer.
+   * @ingroup Callback
+   **/
+  typedef struct _OrthancPluginServerChunkedRequestReader_t OrthancPluginServerChunkedRequestReader;
+
+
+
+  /**
+   * @brief Callback to create a reader to handle incoming chunked HTTP transfers.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP server that supports chunked HTTP transfers. This
+   * callback is only invoked if the HTTP method is POST or PUT. The
+   * callback must create an user-specific "reader" object that will
+   * be fed with the body of the incoming body.
+   * 
+   * @see OrthancPluginRegisterChunkedRestCallback()
+   * @param reader Memory location that must be filled with the newly-created reader.
+   * @param url The URI that is accessed.
+   * @param request The body of the HTTP request. Note that "body" and "bodySize" are not used.
+   * @return 0 if success, or the error code if failure.
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginServerChunkedRequestReaderFactory) (
+    OrthancPluginServerChunkedRequestReader**  reader,
+    const char*                                url,
+    const OrthancPluginHttpRequest*            request);
+
+  
+  /**
+   * @brief Callback invoked whenever a new data chunk is available during a chunked transfer.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP server that supports chunked HTTP transfers. This callback
+   * is invoked as soon as a new data chunk is available for the request body.
+   * 
+   * @see OrthancPluginRegisterChunkedRestCallback()
+   * @param reader The user payload, as created by the OrthancPluginServerChunkedRequestReaderFactory() callback.
+   * @param data The content of the data chunk.
+   * @param size The size of the data chunk.
+   * @return 0 if success, or the error code if failure.
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginServerChunkedRequestReaderAddChunk) (
+    OrthancPluginServerChunkedRequestReader* reader,
+    const void*                              data,
+    uint32_t                                 size);
+    
+
+  /**
+   * @brief Callback invoked whenever the request body is entirely received.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP server that supports chunked HTTP transfers. This
+   * callback is invoked as soon as the full body of the HTTP request
+   * is available. The plugin can then send its answer thanks to the
+   * provided "output" object.
+   * 
+   * @see OrthancPluginRegisterChunkedRestCallback()
+   * @param reader The user payload, as created by the OrthancPluginServerChunkedRequestReaderFactory() callback.
+   * @param output The HTTP connection to the client application.
+   * @return 0 if success, or the error code if failure.
+   **/
+  typedef OrthancPluginErrorCode (*OrthancPluginServerChunkedRequestReaderExecute) (
+    OrthancPluginServerChunkedRequestReader* reader,
+    OrthancPluginRestOutput*                 output);
+    
+
+  /**
+   * @brief Callback invoked to release the resources associated with an incoming HTTP chunked transfer.
+   *
+   * Signature of a callback function that is called by Orthanc acting
+   * as a HTTP server that supports chunked HTTP transfers. This
+   * callback is invoked to release all the resources allocated by the
+   * given reader. Note that this function might be invoked even if
+   * the entire body was not read, to deal with client error or
+   * disconnection.
+   * 
+   * @see OrthancPluginRegisterChunkedRestCallback()
+   * @param reader The user payload, as created by the OrthancPluginServerChunkedRequestReaderFactory() callback.
+   **/
+  typedef void (*OrthancPluginServerChunkedRequestReaderFinalize) (
+    OrthancPluginServerChunkedRequestReader* reader);
+  
+  typedef struct
+  {
+    const char*                                      pathRegularExpression;
+    OrthancPluginRestCallback                        getHandler;
+    OrthancPluginServerChunkedRequestReaderFactory   postHandler;
+    OrthancPluginRestCallback                        deleteHandler;
+    OrthancPluginServerChunkedRequestReaderFactory   putHandler;
+    OrthancPluginServerChunkedRequestReaderAddChunk  addChunk;
+    OrthancPluginServerChunkedRequestReaderExecute   execute;
+    OrthancPluginServerChunkedRequestReaderFinalize  finalize;
+  } _OrthancPluginChunkedRestCallback;
+
+
+  /**
+   * @brief Register a REST callback to handle chunked HTTP transfers.
+   *
+   * This function registers a REST callback against a regular
+   * expression for a URI. This function must be called during the
+   * initialization of the plugin, i.e. inside the
+   * OrthancPluginInitialize() public function.
+   *
+   * Contrarily to OrthancPluginRegisterRestCallback(), the callbacks
+   * will NOT be invoked in mutual exclusion, so it is up to the
+   * plugin to implement the required locking mechanisms.
+   *
+   * @param context The Orthanc plugin context, as received by OrthancPluginInitialize().
+   * @param pathRegularExpression Regular expression for the URI. May contain groups. 
+   * @param getHandler The callback function to handle REST calls using the GET HTTP method.
+   * @param postHandler The callback function to handle REST calls using the GET POST method.
+   * @param deleteHandler The callback function to handle REST calls using the GET DELETE method.
+   * @param putHandler The callback function to handle REST calls using the GET PUT method.
+   * @param addChunk The callback invoked when a new chunk is available for the request body of a POST or PUT call.
+   * @param execute The callback invoked once the entire body of a POST or PUT call is read.
+   * @param finalize The callback invoked to release the resources associated with a POST or PUT call.
+   * @see OrthancPluginRegisterRestCallbackNoLock()
+   *
+   * @note
+   * The regular expression is case sensitive and must follow the
+   * [Perl syntax](https://www.boost.org/doc/libs/1_67_0/libs/regex/doc/html/boost_regex/syntax/perl_syntax.html).
+   *
+   * @ingroup Callbacks
+   **/
+  ORTHANC_PLUGIN_INLINE void OrthancPluginRegisterChunkedRestCallback(
+    OrthancPluginContext*                            context,
+    const char*                                      pathRegularExpression,
+    OrthancPluginRestCallback                        getHandler,
+    OrthancPluginServerChunkedRequestReaderFactory   postHandler,
+    OrthancPluginRestCallback                        deleteHandler,
+    OrthancPluginServerChunkedRequestReaderFactory   putHandler,
+    OrthancPluginServerChunkedRequestReaderAddChunk  addChunk,
+    OrthancPluginServerChunkedRequestReaderExecute   execute,
+    OrthancPluginServerChunkedRequestReaderFinalize  finalize)
+  {
+    _OrthancPluginChunkedRestCallback params;
+    params.pathRegularExpression = pathRegularExpression;
+    params.getHandler = getHandler;
+    params.postHandler = postHandler;
+    params.deleteHandler = deleteHandler;
+    params.putHandler = putHandler;
+    params.addChunk = addChunk;
+    params.execute = execute;
+    params.finalize = finalize;
+
+    context->InvokeService(context, _OrthancPluginService_RegisterChunkedRestCallback, &params);
+  }
+
+
+
+
+
+  typedef struct
+  {
+    char**       result;
+    uint16_t     group;
+    uint16_t     element;
+    const char*  privateCreator;
+  } _OrthancPluginGetTagName;
+
+  /**
+   * @brief Returns the symbolic name of a DICOM tag.
+   *
+   * This function makes a lookup to the dictionary of DICOM tags that
+   * are known to Orthanc, and returns the symbolic name of a DICOM tag.
+   *
+   * @param context The Orthanc plugin context, as received by OrthancPluginInitialize().
+   * @param group The group of the tag.
+   * @param element The element of the tag.
+   * @param privateCreator For private tags, the name of the private creator (can be NULL).
+   * @return NULL in the case of an error, or a newly allocated string
+   * containing the path. This string must be freed by
+   * OrthancPluginFreeString().
+   * @ingroup Toolbox
+   **/
+  ORTHANC_PLUGIN_INLINE char* OrthancPluginGetTagName(
+    OrthancPluginContext*  context,
+    uint16_t               group,
+    uint16_t               element,
+    const char*            privateCreator)
+  {
+    char* result;
+
+    _OrthancPluginGetTagName params;
+    params.result = &result;
+    params.group = group;
+    params.element = element;
+    params.privateCreator = privateCreator;
+
+    if (context->InvokeService(context, _OrthancPluginService_GetTagName, &params) != OrthancPluginErrorCode_Success)
+    {
+      /* Error */
+      return NULL;
+    }
+    else
+    {
+      return result;
+    }
+  }
+
+
+  
 #ifdef  __cplusplus
 }
 #endif

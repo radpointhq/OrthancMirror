@@ -20,10 +20,11 @@ set -u
 ##   - Orthanc 1.3.1: Boost 1.65.1
 ##   - Orthanc 1.3.2: Boost 1.66.0
 ##   - Orthanc between 1.4.0 and 1.4.2: Boost 1.67.0
-##   - Orthanc >= 1.5.0: Boost 1.68.0
+##   - Orthanc between 1.5.0 and 1.5.4: Boost 1.68.0
+##   - Orthanc >= 1.5.5: Boost 1.69.0
 
-BOOST_VERSION=1_68_0
-ORTHANC_VERSION=1.5.0
+BOOST_VERSION=1_69_0
+ORTHANC_VERSION=1.5.6
 
 rm -rf /tmp/boost_${BOOST_VERSION}
 rm -rf /tmp/bcp/boost_${BOOST_VERSION}
@@ -34,7 +35,7 @@ tar xfz ./boost_${BOOST_VERSION}.tar.gz
 
 echo "Generating the subset..."
 mkdir -p /tmp/bcp/boost_${BOOST_VERSION}
-bcp --boost=/tmp/boost_${BOOST_VERSION} thread system locale date_time filesystem math/special_functions algorithm uuid atomic iostreams program_options numeric/ublas geometry polygon signals2 /tmp/bcp/boost_${BOOST_VERSION}
+bcp --boost=/tmp/boost_${BOOST_VERSION} thread system locale date_time filesystem math/special_functions algorithm uuid atomic iostreams program_options numeric/ublas geometry polygon signals2 chrono /tmp/bcp/boost_${BOOST_VERSION}
 
 echo "Removing documentation..."
 rm -rf /tmp/bcp/boost_${BOOST_VERSION}/libs/locale/doc/html

@@ -94,7 +94,7 @@ if (NOT ENABLE_PUGIXML)
 endif()
 
 if (NOT ENABLE_LOCALE)
-  unset(USE_SYSTEM_LIBICONV CACHE)
+  unset(BOOST_LOCALE_BACKEND CACHE)
   add_definitions(-DORTHANC_ENABLE_LOCALE=0)
 endif()
 
@@ -109,7 +109,7 @@ if (NOT ENABLE_DCMTK)
     -DORTHANC_ENABLE_DCMTK_NETWORKING=0
     )
   unset(DCMTK_DICTIONARY_DIR CACHE)
-  unset(USE_DCMTK_360 CACHE)
+  unset(DCMTK_VERSION CACHE)
   unset(USE_DCMTK_362_PRIVATE_DIC CACHE)
   unset(USE_SYSTEM_DCMTK CACHE)
   unset(ENABLE_DCMTK_JPEG CACHE)
@@ -128,6 +128,8 @@ set(ORTHANC_CORE_SOURCES_INTERNAL
   ${ORTHANC_ROOT}/Core/EnumerationDictionary.h
   ${ORTHANC_ROOT}/Core/Enumerations.cpp
   ${ORTHANC_ROOT}/Core/FileStorage/MemoryStorageArea.cpp
+  ${ORTHANC_ROOT}/Core/HttpServer/MultipartStreamReader.cpp
+  ${ORTHANC_ROOT}/Core/HttpServer/StringMatcher.cpp
   ${ORTHANC_ROOT}/Core/Logging.cpp
   ${ORTHANC_ROOT}/Core/SerializationToolbox.cpp
   ${ORTHANC_ROOT}/Core/Toolbox.cpp
@@ -378,16 +380,25 @@ endif()
 
 
 ##
-## Locale support: libiconv
+## Locale support
 ##
 
 if (ENABLE_LOCALE)
   if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     # In WebAssembly or asm.js, we rely on the version of iconv that
     # is shipped with the stdlib
-    unset(USE_BOOST_ICONV CACHE)
+    unset(BOOST_LOCALE_BACKEND CACHE)
   else()
-    include(${CMAKE_CURRENT_LIST_DIR}/LibIconvConfiguration.cmake)
+    if (BOOST_LOCALE_BACKEND STREQUAL "gcc")
+    elseif (BOOST_LOCALE_BACKEND STREQUAL "libiconv")
+      include(${CMAKE_CURRENT_LIST_DIR}/LibIconvConfiguration.cmake)
+    elseif (BOOST_LOCALE_BACKEND STREQUAL "icu")
+      include(${CMAKE_CURRENT_LIST_DIR}/LibIcuConfiguration.cmake)
+    elseif (BOOST_LOCALE_BACKEND STREQUAL "wconv")
+      message("Using Microsoft Window's wconv")
+    else()
+      message(FATAL_ERROR "Invalid value for BOOST_LOCALE_BACKEND: ${BOOST_LOCALE_BACKEND}")
+    endif()
   endif()
   
   add_definitions(-DORTHANC_ENABLE_LOCALE=1)
@@ -496,7 +507,7 @@ endif()
 #####################################################################
 
 add_definitions(
-  -DORTHANC_API_VERSION="${ORTHANC_API_VERSION}"
+  -DORTHANC_API_VERSION=${ORTHANC_API_VERSION}
   -DORTHANC_DATABASE_VERSION=${ORTHANC_DATABASE_VERSION}
   -DORTHANC_DEFAULT_DICOM_ENCODING=Encoding_Latin1
   -DORTHANC_ENABLE_BASE64=1
@@ -532,6 +543,7 @@ else()
 
   list(APPEND ORTHANC_CORE_SOURCES_INTERNAL
     ${ORTHANC_ROOT}/Core/Cache/SharedArchive.cpp
+    ${ORTHANC_ROOT}/Core/FileBuffer.cpp
     ${ORTHANC_ROOT}/Core/FileStorage/FilesystemStorage.cpp
     ${ORTHANC_ROOT}/Core/MetricsRegistry.cpp
     ${ORTHANC_ROOT}/Core/MultiThreading/RunnableWorkersPool.cpp
@@ -610,6 +622,7 @@ set(ORTHANC_CORE_SOURCES_DEPENDENCIES
   ${CURL_SOURCES}
   ${JSONCPP_SOURCES}
   ${LIBICONV_SOURCES}
+  ${LIBICU_SOURCES}
   ${LIBJPEG_SOURCES}
   ${LIBP11_SOURCES}
   ${LIBPNG_SOURCES}

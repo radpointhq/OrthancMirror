@@ -40,6 +40,8 @@
 #include "../Endianness.h"
 #include "../Logging.h"
 #include "../OrthancException.h"
+#include "../Toolbox.h"
+#include "DicomArray.h"
 
 
 namespace Orthanc
@@ -875,9 +877,9 @@ namespace Orthanc
   }
 
 
-  bool DicomMap::CopyToString(std::string& result,
-                              const DicomTag& tag,
-                              bool allowBinary) const
+  bool DicomMap::LookupStringValue(std::string& result,
+                                   const DicomTag& tag,
+                                   bool allowBinary) const
   {
     const DicomValue* value = TestAndGetValue(tag);
 
@@ -984,6 +986,11 @@ namespace Orthanc
   
   void DicomMap::FromDicomAsJson(const Json::Value& dicomAsJson)
   {
+    if (dicomAsJson.type() != Json::objectValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat);
+    }
+    
     Clear();
     
     Json::Value::Members tags = dicomAsJson.getMemberNames();
@@ -1132,5 +1139,164 @@ namespace Orthanc
 
       map_[tag] = value.release();
     }
+  }
+
+
+  void DicomMap::FromDicomWeb(const Json::Value& source)
+  {
+    static const char* const ALPHABETIC = "Alphabetic";
+    static const char* const IDEOGRAPHIC = "Ideographic";
+    static const char* const INLINE_BINARY = "InlineBinary";
+    static const char* const PHONETIC = "Phonetic";
+    static const char* const VALUE = "Value";
+    static const char* const VR = "vr";
+  
+    Clear();
+
+    if (source.type() != Json::objectValue)
+    {
+      throw OrthancException(ErrorCode_BadFileFormat);
+    }
+  
+    Json::Value::Members tags = source.getMemberNames();
+
+    for (size_t i = 0; i < tags.size(); i++)
+    {
+      const Json::Value& item = source[tags[i]];
+      DicomTag tag(0, 0);
+
+      if (item.type() != Json::objectValue ||
+          !item.isMember(VR) ||
+          item[VR].type() != Json::stringValue ||
+          !DicomTag::ParseHexadecimal(tag, tags[i].c_str()))
+      {
+        throw OrthancException(ErrorCode_BadFileFormat);
+      }
+
+      ValueRepresentation vr = StringToValueRepresentation(item[VR].asString(), false);
+
+      if (item.isMember(INLINE_BINARY))
+      {
+        const Json::Value& value = item[INLINE_BINARY];
+
+        if (value.type() == Json::stringValue)
+        {
+          std::string decoded;
+          Toolbox::DecodeBase64(decoded, value.asString());
+          SetValue(tag, decoded, true /* binary data */);
+        }
+      }
+      else if (!item.isMember(VALUE))
+      {
+        // Tag is present, but it has a null value
+        SetValue(tag, "", false /* not binary */);
+      }
+      else
+      {
+        const Json::Value& value = item[VALUE];
+
+        if (value.type() == Json::arrayValue)
+        {
+          bool supported = true;
+          
+          std::string s;
+          for (Json::Value::ArrayIndex i = 0; i < value.size() && supported; i++)
+          {
+            if (!s.empty())
+            {
+              s += '\\';
+            }
+
+            switch (value[i].type())
+            {
+              case Json::objectValue:
+                if (vr == ValueRepresentation_PersonName &&
+                    value[i].type() == Json::objectValue)
+                {
+                  if (value[i].isMember(ALPHABETIC) &&
+                      value[i][ALPHABETIC].type() == Json::stringValue)
+                  {
+                    s += value[i][ALPHABETIC].asString();
+                  }
+
+                  bool hasIdeographic = false;
+                  
+                  if (value[i].isMember(IDEOGRAPHIC) &&
+                      value[i][IDEOGRAPHIC].type() == Json::stringValue)
+                  {
+                    s += '=' + value[i][IDEOGRAPHIC].asString();
+                    hasIdeographic = true;
+                  }
+                  
+                  if (value[i].isMember(PHONETIC) &&
+                      value[i][PHONETIC].type() == Json::stringValue)
+                  {
+                    if (!hasIdeographic)
+                    {
+                      s += '=';
+                    }
+                      
+                    s += '=' + value[i][PHONETIC].asString();
+                  }
+                }
+                else
+                {
+                  // This is the case of sequences
+                  supported = false;
+                }
+
+                break;
+            
+              case Json::stringValue:
+                s += value[i].asString();
+                break;
+              
+              case Json::intValue:
+                s += boost::lexical_cast<std::string>(value[i].asInt());
+                break;
+              
+              case Json::uintValue:
+                s += boost::lexical_cast<std::string>(value[i].asUInt());
+                break;
+              
+              case Json::realValue:
+                s += boost::lexical_cast<std::string>(value[i].asDouble());
+                break;
+              
+              default:
+                break;
+            }
+          }
+
+          if (supported)
+          {
+            SetValue(tag, s, false /* not binary */);
+          }
+        }
+      }
+    }
+  }
+
+
+  std::string DicomMap::GetStringValue(const DicomTag& tag,
+                                       const std::string& defaultValue,
+                                       bool allowBinary) const
+  {
+    std::string s;
+    if (LookupStringValue(s, tag, allowBinary))
+    {
+      return s;
+    }
+    else
+    {
+      return defaultValue;
+    }
+  }
+
+
+  void DicomMap::Print(FILE* fp) const
+  {
+    DicomArray a(*this);
+    a.Print(fp);
   }
 }

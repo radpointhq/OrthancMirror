@@ -92,9 +92,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../DicomParsing/FromDcmtkBridge.h"
 #include "../DicomParsing/ToDcmtkBridge.h"
 
+#include <dcmtk/dcmdata/dcdeftag.h>
+#include <dcmtk/dcmdata/dcfilefo.h>
 #include <dcmtk/dcmdata/dcistrmb.h>
 #include <dcmtk/dcmdata/dcistrmf.h>
-#include <dcmtk/dcmdata/dcfilefo.h>
 #include <dcmtk/dcmdata/dcmetinf.h>
 #include <dcmtk/dcmnet/diutil.h>
 
@@ -165,7 +166,8 @@ namespace Orthanc
 
 
   static void Check(const OFCondition& cond,
-                    const std::string& aet)
+                    const std::string& aet,
+                    const std::string& command)
   {
     if (cond.bad())
     {
@@ -205,9 +207,10 @@ namespace Orthanc
       {
         info += ")";
       }
-      
+
       throw OrthancException(ErrorCode_NetworkProtocol,
-                             "DicomUserConnection to AET \"" + aet + "\": " + info);
+                             "DicomUserConnection - " + command +
+                             " to AET \"" + aet + "\": " + info);
     }
   }
 
@@ -235,13 +238,15 @@ namespace Orthanc
                                       const std::string& aet)
   {
     Check(ASC_addPresentationContext(params, presentationContextId, 
-                                     sopClass.c_str(), asPreferred, 1), aet);
+                                     sopClass.c_str(), asPreferred, 1),
+          aet, "initializing");
     presentationContextId += 2;
 
     if (asFallback.size() > 0)
     {
       Check(ASC_addPresentationContext(params, presentationContextId, 
-                                       sopClass.c_str(), &asFallback[0], asFallback.size()), aet);
+                                       sopClass.c_str(), &asFallback[0], asFallback.size()),
+            aet, "initializing");
       presentationContextId += 2;
     }
   }
@@ -308,12 +313,12 @@ namespace Orthanc
                                          uint16_t moveOriginatorID)
   {
     DcmFileFormat dcmff;
-    Check(dcmff.read(is, EXS_Unknown, EGL_noChange, DCM_MaxReadLength), connection.remoteAet_);
+    Check(dcmff.read(is, EXS_Unknown, EGL_noChange, DCM_MaxReadLength),
+          connection.remoteAet_, "C-STORE");
 
     // Determine the storage SOP class UID for this instance
-    static const DcmTagKey DCM_SOP_CLASS_UID(0x0008, 0x0016);
     OFString sopClassUid;
-    if (dcmff.getDataset()->findAndGetOFString(DCM_SOP_CLASS_UID, sopClassUid).good())
+    if (dcmff.getDataset()->findAndGetOFString(DCM_SOPClassUID, sopClassUid).good())
     {
       connection.AddStorageSOPClass(sopClassUid.c_str());
     }
@@ -380,7 +385,9 @@ namespace Orthanc
     if (!DU_findSOPClassAndInstanceInDataSet(dcmff.getDataset(), sopClass, sopInstance))
 #endif
     {
-      throw OrthancException(ErrorCode_NoSopClassOrInstance);
+      throw OrthancException(ErrorCode_NoSopClassOrInstance,
+                             "Unable to determine the SOP class/instance for C-STORE with AET " +
+                             connection.remoteAet_);
     }
 
     // Figure out which of the accepted presentation contexts should be used
@@ -388,9 +395,11 @@ namespace Orthanc
     if (presID == 0)
     {
       const char *modalityName = dcmSOPClassUIDToModality(sopClass);
-      if (!modalityName) modalityName = dcmFindNameOfUID(sopClass);
-      if (!modalityName) modalityName = "unknown SOP class";
-      throw OrthancException(ErrorCode_NoPresentationContext);
+      if (modalityName == NULL) modalityName = dcmFindNameOfUID(sopClass);
+      if (modalityName == NULL) modalityName = "unknown SOP class";
+      throw OrthancException(ErrorCode_NoPresentationContext,
+                             "Unable to determine the accepted presentation contexts for C-STORE with AET " +
+                             connection.remoteAet_ + " (" + std::string(modalityName) + ")");
     }
 
     // Prepare the transmission of data
@@ -418,7 +427,8 @@ namespace Orthanc
     Check(DIMSE_storeUser(assoc_, presID, &request,
                           NULL, dcmff.getDataset(), /*progressCallback*/ NULL, NULL,
                           /*opt_blockMode*/ DIMSE_BLOCKING, /*opt_dimse_timeout*/ dimseTimeout_,
-                          &rsp, &statusDetail, NULL), connection.remoteAet_);
+                          &rsp, &statusDetail, NULL),
+          connection.remoteAet_, "C-STORE");
 
     if (statusDetail != NULL) 
     {
@@ -472,9 +482,9 @@ namespace Orthanc
   }
 
 
-  static void FixFindQuery(DicomMap& fixedQuery,
-                           ResourceType level,
-                           const DicomMap& fields)
+  static void NormalizeFindQuery(DicomMap& fixedQuery,
+                                 ResourceType level,
+                                 const DicomMap& fields)
   {
     std::set<DicomTag> allowedTags;
 
@@ -580,11 +590,11 @@ namespace Orthanc
           }
         }
 
-        return new ParsedDicomFile(*fix);
+        return new ParsedDicomFile(*fix, GetDefaultDicomEncoding(), false /* be strict */);
       }
 
       default:
-        return new ParsedDicomFile(fields);
+        return new ParsedDicomFile(fields, GetDefaultDicomEncoding(), false /* be strict */);
     }
   }
 
@@ -609,7 +619,8 @@ namespace Orthanc
     int presID = ASC_findAcceptedPresentationContextID(association, sopClass);
     if (presID == 0)
     {
-      throw OrthancException(ErrorCode_DicomFindUnavailable);
+      throw OrthancException(ErrorCode_DicomFindUnavailable,
+                             "Remote AET is " + remoteAet);
     }
 
     T_DIMSE_C_FindRQ request;
@@ -640,20 +651,32 @@ namespace Orthanc
       delete statusDetail;
     }
 
-    Check(cond, remoteAet);
+    Check(cond, remoteAet, "C-FIND");
   }
 
 
   void DicomUserConnection::Find(DicomFindAnswers& result,
                                  ResourceType level,
-                                 const DicomMap& originalFields)
+                                 const DicomMap& originalFields,
+                                 bool normalize)
   {
-    DicomMap fields;
-    FixFindQuery(fields, level, originalFields);
-
     CheckIsOpen();
 
-    std::auto_ptr<ParsedDicomFile> query(ConvertQueryFields(fields, manufacturer_));
+    std::auto_ptr<ParsedDicomFile> query;
+
+    if (normalize)
+    {
+      DicomMap fields;
+      NormalizeFindQuery(fields, level, originalFields);
+      query.reset(ConvertQueryFields(fields, manufacturer_));
+    }
+    else
+    {
+      query.reset(new ParsedDicomFile(originalFields,
+                                      GetDefaultDicomEncoding(),
+                                      false /* be strict */));
+    }
+    
     DcmDataset* dataset = query->GetDcmtkObject().getDataset();
 
     const char* clevel = NULL;
@@ -663,19 +686,19 @@ namespace Orthanc
     {
       case ResourceType_Patient:
         clevel = "PATIENT";
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "PATIENT");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "PATIENT");
         sopClass = UID_FINDPatientRootQueryRetrieveInformationModel;
         break;
 
       case ResourceType_Study:
         clevel = "STUDY";
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "STUDY");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "STUDY");
         sopClass = UID_FINDStudyRootQueryRetrieveInformationModel;
         break;
 
       case ResourceType_Series:
         clevel = "SERIES";
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "SERIES");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "SERIES");
         sopClass = UID_FINDStudyRootQueryRetrieveInformationModel;
         break;
 
@@ -688,12 +711,12 @@ namespace Orthanc
           // This is a particular case for ClearCanvas, thanks to Peter Somlo <peter.somlo@gmail.com>.
           // https://groups.google.com/d/msg/orthanc-users/j-6C3MAVwiw/iolB9hclom8J
           // http://www.clearcanvas.ca/Home/Community/OldForums/tabid/526/aff/11/aft/14670/afv/topic/Default.aspx
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "IMAGE");
+          DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "IMAGE");
           clevel = "IMAGE";
         }
         else
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "INSTANCE");
+          DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "INSTANCE");
         }
 
         sopClass = UID_FINDStudyRootQueryRetrieveInformationModel;
@@ -720,37 +743,32 @@ namespace Orthanc
     switch (level)
     {
       case ResourceType_Instance:
-        // SOP Instance UID
-        if (!fields.HasTag(0x0008, 0x0018))
+        if (!dataset->tagExists(DCM_SOPInstanceUID))
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0018), universal);
+          DU_putStringDOElement(dataset, DCM_SOPInstanceUID, universal);
         }
 
       case ResourceType_Series:
-        // Series instance UID
-        if (!fields.HasTag(0x0020, 0x000e))
+        if (!dataset->tagExists(DCM_SeriesInstanceUID))
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0020, 0x000e), universal);
+          DU_putStringDOElement(dataset, DCM_SeriesInstanceUID, universal);
         }
 
       case ResourceType_Study:
-        // Accession number
-        if (!fields.HasTag(0x0008, 0x0050))
+        if (!dataset->tagExists(DCM_AccessionNumber))
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0050), universal);
+          DU_putStringDOElement(dataset, DCM_AccessionNumber, universal);
         }
 
-        // Study instance UID
-        if (!fields.HasTag(0x0020, 0x000d))
+        if (!dataset->tagExists(DCM_StudyInstanceUID))
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0020, 0x000d), universal);
+          DU_putStringDOElement(dataset, DCM_StudyInstanceUID, universal);
         }
 
       case ResourceType_Patient:
-        // Patient ID
-        if (!fields.HasTag(0x0010, 0x0020))
+        if (!dataset->tagExists(DCM_PatientID))
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0010, 0x0020), universal);
+          DU_putStringDOElement(dataset, DCM_PatientID, universal);
         }
         
         break;
@@ -778,15 +796,15 @@ namespace Orthanc
     switch (level)
     {
       case ResourceType_Patient:
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "PATIENT");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "PATIENT");
         break;
 
       case ResourceType_Study:
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "STUDY");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "STUDY");
         break;
 
       case ResourceType_Series:
-        DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "SERIES");
+        DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "SERIES");
         break;
 
       case ResourceType_Instance:
@@ -797,11 +815,11 @@ namespace Orthanc
           // This is a particular case for ClearCanvas, thanks to Peter Somlo <peter.somlo@gmail.com>.
           // https://groups.google.com/d/msg/orthanc-users/j-6C3MAVwiw/iolB9hclom8J
           // http://www.clearcanvas.ca/Home/Community/OldForums/tabid/526/aff/11/aft/14670/afv/topic/Default.aspx
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "IMAGE");
+          DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "IMAGE");
         }
         else
         {
-          DU_putStringDOElement(dataset, DcmTagKey(0x0008, 0x0052), "INSTANCE");
+          DU_putStringDOElement(dataset, DCM_QueryRetrieveLevel, "INSTANCE");
         }
         break;
 
@@ -813,7 +831,8 @@ namespace Orthanc
     int presID = ASC_findAcceptedPresentationContextID(pimpl_->assoc_, sopClass);
     if (presID == 0)
     {
-      throw OrthancException(ErrorCode_DicomMoveUnavailable);
+      throw OrthancException(ErrorCode_DicomMoveUnavailable,
+                             "Remote AET is " + remoteAet_);
     }
 
     T_DIMSE_C_MoveRQ request;
@@ -844,7 +863,7 @@ namespace Orthanc
       delete responseIdentifiers;
     }
 
-    Check(cond, remoteAet_);
+    Check(cond, remoteAet_, "C-MOVE");
   }
 
 
@@ -983,7 +1002,8 @@ namespace Orthanc
     {
       if (host.size() > HOST_NAME_MAX - 10)
       {
-        throw OrthancException(ErrorCode_ParameterOutOfRange);
+        throw OrthancException(ErrorCode_ParameterOutOfRange,
+                               "Invalid host name (too long): " + host);
       }
 
       Close();
@@ -1013,11 +1033,12 @@ namespace Orthanc
               << GetRemoteHost() << ":" << GetRemotePort() 
               << " (manufacturer: " << EnumerationToString(GetRemoteManufacturer()) << ")";
 
-    Check(ASC_initializeNetwork(NET_REQUESTOR, 0, /*opt_acse_timeout*/ pimpl_->acseTimeout_, &pimpl_->net_), remoteAet_);
-    Check(ASC_createAssociationParameters(&pimpl_->params_, /*opt_maxReceivePDULength*/ ASC_DEFAULTMAXPDU), remoteAet_);
+    Check(ASC_initializeNetwork(NET_REQUESTOR, 0, /*opt_acse_timeout*/ pimpl_->acseTimeout_, &pimpl_->net_), remoteAet_, "connecting");
+    Check(ASC_createAssociationParameters(&pimpl_->params_, /*opt_maxReceivePDULength*/ ASC_DEFAULTMAXPDU), remoteAet_, "connecting");
 
     // Set this application's title and the called application's title in the params
-    Check(ASC_setAPTitles(pimpl_->params_, localAet_.c_str(), remoteAet_.c_str(), NULL), remoteAet_);
+    Check(ASC_setAPTitles(pimpl_->params_, localAet_.c_str(), remoteAet_.c_str(), NULL),
+          remoteAet_, "connecting");
 
     // Set the network addresses of the local and remote entities
     char localHost[HOST_NAME_MAX];
@@ -1032,19 +1053,24 @@ namespace Orthanc
 #endif
       (remoteHostAndPort, HOST_NAME_MAX - 1, "%s:%d", remoteHost_.c_str(), remotePort_);
 
-    Check(ASC_setPresentationAddresses(pimpl_->params_, localHost, remoteHostAndPort), remoteAet_);
+    Check(ASC_setPresentationAddresses(pimpl_->params_, localHost, remoteHostAndPort),
+          remoteAet_, "connecting");
 
     // Set various options
-    Check(ASC_setTransportLayerType(pimpl_->params_, /*opt_secureConnection*/ false), remoteAet_);
+    Check(ASC_setTransportLayerType(pimpl_->params_, /*opt_secureConnection*/ false),
+          remoteAet_, "connecting");
 
     SetupPresentationContexts(preferredTransferSyntax_);
 
     // Do the association
-    Check(ASC_requestAssociation(pimpl_->net_, pimpl_->params_, &pimpl_->assoc_), remoteAet_);
+    Check(ASC_requestAssociation(pimpl_->net_, pimpl_->params_, &pimpl_->assoc_),
+          remoteAet_, "connecting");
 
     if (ASC_countAcceptedPresentationContexts(pimpl_->params_) == 0)
     {
-      throw OrthancException(ErrorCode_NoPresentationContext);
+      throw OrthancException(ErrorCode_NoPresentationContext,
+                             "Unable to negotiate a presentation context with AET " +
+                             remoteAet_);
     }
   }
 
@@ -1097,7 +1123,7 @@ namespace Orthanc
                                   uint16_t moveOriginatorID)
   {
     if (buffer.size() > 0)
-      Store(reinterpret_cast<const char*>(&buffer[0]), buffer.size(), moveOriginatorAET, moveOriginatorID);
+      Store(&buffer[0], buffer.size(), moveOriginatorAET, moveOriginatorID);
     else
       Store(NULL, 0, moveOriginatorAET, moveOriginatorID);
   }
@@ -1118,7 +1144,7 @@ namespace Orthanc
     Check(DIMSE_echoUser(pimpl_->assoc_, pimpl_->assoc_->nextMsgID++, 
                          /*opt_blockMode*/ DIMSE_BLOCKING, 
                          /*opt_dimse_timeout*/ pimpl_->dimseTimeout_,
-                         &status, NULL), remoteAet_);
+                         &status, NULL), remoteAet_, "C-ECHO");
     return status == STATUS_Success;
   }
 

@@ -17,7 +17,7 @@ set(ORTHANC_DATABASE_VERSION 6)
 # Version of the Orthanc API, can be retrieved from "/system" URI in
 # order to check whether new URI endpoints are available even if using
 # the mainline version of Orthanc
-set(ORTHANC_API_VERSION "1.4")
+set(ORTHANC_API_VERSION "4")
 
 
 #####################################################################
@@ -43,6 +43,7 @@ set(USE_SYSTEM_CURL ON CACHE BOOL "Use the system version of LibCurl")
 set(USE_SYSTEM_GOOGLE_TEST ON CACHE BOOL "Use the system version of Google Test")
 set(USE_SYSTEM_JSONCPP ON CACHE BOOL "Use the system version of JsonCpp")
 set(USE_SYSTEM_LIBICONV ON CACHE BOOL "Use the system version of libiconv")
+set(USE_SYSTEM_LIBICU ON CACHE BOOL "Use the system version of libicu")
 set(USE_SYSTEM_LIBJPEG ON CACHE BOOL "Use the system version of libjpeg")
 set(USE_SYSTEM_LIBP11 OFF CACHE BOOL "Use the system version of libp11 (PKCS#11 wrapper library)")
 set(USE_SYSTEM_LIBPNG ON CACHE BOOL "Use the system version of libpng")
@@ -55,8 +56,8 @@ set(USE_SYSTEM_UUID ON CACHE BOOL "Use the system version of the uuid library fr
 set(USE_SYSTEM_ZLIB ON CACHE BOOL "Use the system version of ZLib")
 
 # Parameters specific to DCMTK
-set(DCMTK_DICTIONARY_DIR "" CACHE PATH "Directory containing the DCMTK dictionaries \"dicom.dic\" and \"private.dic\" (only when using system version of DCMTK)") 
-set(USE_DCMTK_360 OFF CACHE BOOL "Use older DCMTK version 3.6.0 in static builds (instead of default 3.6.2)")
+set(DCMTK_DICTIONARY_DIR "" CACHE PATH "Directory containing the DCMTK dictionaries \"dicom.dic\" and \"private.dic\" (only when using system version of DCMTK)")
+set(DCMTK_STATIC_VERSION "3.6.4" CACHE STRING "Version of DCMTK to be used in static builds (can be \"3.6.0\", \"3.6.2\", or \"3.6.4\")")
 set(USE_DCMTK_362_PRIVATE_DIC ON CACHE BOOL "Use the dictionary of private tags from DCMTK 3.6.2 if using DCMTK 3.6.0")
 set(USE_SYSTEM_DCMTK ON CACHE BOOL "Use the system version of DCMTK")
 set(ENABLE_DCMTK_LOG ON CACHE BOOL "Enable logging internal to DCMTK")
@@ -66,15 +67,17 @@ set(ENABLE_DCMTK_JPEG_LOSSLESS ON CACHE BOOL "Enable JPEG-LS (Lossless) decompre
 # Advanced and distribution-specific parameters
 set(USE_GOOGLE_TEST_DEBIAN_PACKAGE OFF CACHE BOOL "Use the sources of Google Test shipped with libgtest-dev (Debian only)")
 set(SYSTEM_MONGOOSE_USE_CALLBACKS ON CACHE BOOL "The system version of Mongoose uses callbacks (version >= 3.7)")
-set(USE_BOOST_ICONV ON CACHE BOOL "Use iconv instead of wconv (Windows only)")
+set(BOOST_LOCALE_BACKEND "libiconv" CACHE STRING "Back-end for locales that is used by Boost (can be \"gcc\", \"libiconv\", \"icu\", or \"wconv\" on Windows)")
 set(USE_PUGIXML ON CACHE BOOL "Use the Pugixml parser (turn off only for debug)")
-set(USE_LEGACY_JSONCPP OFF CACHE BOOL "Use the old branch 0.x.y of JsonCpp, that does not require a C++11 compiler (for old versions of Visual Studio)")
+set(USE_LEGACY_JSONCPP OFF CACHE BOOL "Use the old branch 0.x.y of JsonCpp, that does not require a C++11 compiler (for LSB and old versions of Visual Studio)")
+set(USE_LEGACY_LIBICU OFF CACHE BOOL "Use icu icu4c-58_2, latest version not requiring a C++11 compiler (for LSB and old versions of Visual Studio)")
+set(MSVC_MULTIPLE_PROCESSES OFF CACHE BOOL "Add the /MP option to build with multiple processes if using Visual Studio")
+set(EMSCRIPTEN_SET_LLVM_WASM_BACKEND OFF CACHE BOOL "Sets the compiler flags required to use the LLVM Web Assembly backend in emscripten")
 
 mark_as_advanced(USE_GOOGLE_TEST_DEBIAN_PACKAGE)
 mark_as_advanced(SYSTEM_MONGOOSE_USE_CALLBACKS)
-mark_as_advanced(USE_BOOST_ICONV)
 mark_as_advanced(USE_PUGIXML)
-mark_as_advanced(USE_LEGACY_JSONCPP)
+mark_as_advanced(USE_DCMTK_362_PRIVATE_DIC)
 
 
 #####################################################################

@@ -53,11 +53,14 @@ namespace Orthanc
  
   static void GetSystemInformation(RestApiGetCall& call)
   {
+    ServerContext& context = OrthancRestApi::GetContext(call);
+
     Json::Value result = Json::objectValue;
 
     result["ApiVersion"] = ORTHANC_API_VERSION;
     result["Version"] = ORTHANC_VERSION;
     result["DatabaseVersion"] = OrthancRestApi::GetIndex(call).GetDatabaseVersion();
+    result["IsHttpServerSecure"] = context.IsHttpServerSecure();  // New in Orthanc 1.5.8
 
     {
       OrthancConfiguration::ReaderLock lock;
@@ -72,7 +75,7 @@ namespace Orthanc
 
 #if ORTHANC_ENABLE_PLUGINS == 1
     result["PluginsEnabled"] = true;
-    const OrthancPlugins& plugins = OrthancRestApi::GetContext(call).GetPlugins();
+    const OrthancPlugins& plugins = context.GetPlugins();
 
     if (plugins.HasStorageArea())
     {
@@ -136,9 +139,17 @@ namespace Orthanc
 
   static void ExecuteScript(RestApiPostCall& call)
   {
-    std::string result;
     ServerContext& context = OrthancRestApi::GetContext(call);
 
+    if (!context.IsExecuteLuaEnabled())
+    {
+      LOG(ERROR) << "The URI /tools/execute-script is disallowed for security, "
+                 << "check your configuration file";
+      call.GetOutput().SignalError(HttpStatus_403_Forbidden);
+      return;
+    }
+
+    std::string result;
     std::string command;
     call.BodyToString(command);
 
@@ -174,7 +185,10 @@ namespace Orthanc
 
   static void SetDefaultEncoding(RestApiPutCall& call)
   {
-    Encoding encoding = StringToEncoding(call.GetBodyData());
+    std::string body;
+    call.BodyToString(body);
+
+    Encoding encoding = StringToEncoding(body.c_str());
 
     {
       OrthancConfiguration::WriterLock lock;
@@ -453,7 +467,8 @@ namespace Orthanc
   {
     bool enabled;
 
-    std::string body(call.GetBodyData());
+    std::string body;
+    call.BodyToString(body);
 
     if (body == "1")
     {

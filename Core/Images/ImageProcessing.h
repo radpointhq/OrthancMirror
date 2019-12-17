@@ -34,13 +34,46 @@
 #pragma once
 
 #include "ImageAccessor.h"
+#include <vector>
 
 #include <stdint.h>
+#include <algorithm>
 
 namespace Orthanc
 {
   namespace ImageProcessing
   {
+    class ImagePoint
+    {
+      int32_t x_;
+      int32_t y_;
+      
+     public:
+      ImagePoint(int32_t x, int32_t y)
+        : x_(x),
+          y_(y)
+      {
+      }
+
+      int32_t GetX() const {return x_;}
+
+      int32_t GetY() const {return y_;}
+
+      void Set(int32_t x, int32_t y)
+      {
+        x_ = x;
+        y_ = y;
+      }
+
+      void ClipTo(int32_t minX, int32_t maxX, int32_t minY, int32_t maxY)
+      {
+        x_ = std::max(minX, std::min(maxX, x_));
+        y_ = std::max(minY, std::min(maxY, y_));
+      }
+
+      double GetDistanceTo(const ImagePoint& other) const;
+    };
+
     void Copy(ImageAccessor& target,
               const ImageAccessor& source);
 
@@ -83,6 +116,8 @@ namespace Orthanc
 
     void Invert(ImageAccessor& image);
 
+    void Invert(ImageAccessor& image, int64_t maxValue);
+
     void DrawLineSegment(ImageAccessor& image,
                          int x0,
                          int y0,
@@ -99,5 +134,27 @@ namespace Orthanc
                          uint8_t green,
                          uint8_t blue,
                          uint8_t alpha);
+
+    void FillPolygon(ImageAccessor& image,
+                     const std::vector<ImagePoint>& points,
+                     int64_t value);
+
+    void Resize(ImageAccessor& target,
+                const ImageAccessor& source);
+
+    ImageAccessor* Halve(const ImageAccessor& source,
+                         bool forceMinimalPitch);
+
+    void FlipX(ImageAccessor& image);
+
+    void FlipY(ImageAccessor& image);
+
+    void SeparableConvolution(ImageAccessor& image /* inplace */,
+                              const std::vector<float>& horizontal,
+                              size_t horizontalAnchor,
+                              const std::vector<float>& vertical,
+                              size_t verticalAnchor);
+
+    void SmoothGaussian5x5(ImageAccessor& image);
   }
 }

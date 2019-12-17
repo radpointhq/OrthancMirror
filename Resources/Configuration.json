@@ -111,7 +111,8 @@
   // C-Find requests (including worklists). The allowed values are
   // "Ascii", "Utf8", "Latin1", "Latin2", "Latin3", "Latin4",
   // "Latin5", "Cyrillic", "Windows1251", "Arabic", "Greek", "Hebrew",
-  // "Thai", "Japanese", and "Chinese".
+  // "Thai", "Japanese", "Chinese", "JapaneseKanji", "Korean", and
+  // "SimplifiedChinese".
   "DefaultEncoding" : "Latin1",
 
   // The transfer syntaxes that are accepted by Orthanc C-Store SCP
@@ -148,8 +149,14 @@
   // SSL is enabled)
   "SslCertificate" : "certificate.pem",
 
-  // Whether or not the password protection is enabled
-  "AuthenticationEnabled" : false,
+  // Whether or not the password protection is enabled (using HTTP
+  // basic access authentication). Starting with Orthanc 1.5.8, if
+  // "AuthenticationEnabled" is not explicitly set, authentication is
+  // enabled iff. remote access is allowed (i.e. the default value of
+  // "AuthenticationEnabled" equals that of "RemoteAccessAllowed").
+  /**
+     "AuthenticationEnabled" : false,
+   **/
 
   // The list of the registered users. Because Orthanc uses HTTP
   // Basic Authentication, the passwords are stored as plain text.
@@ -193,11 +200,14 @@
     // "clearcanvas" : [ "CLEARCANVAS", "192.168.1.1", 104, "ClearCanvas" ]
 
     /**
-     * By default, the Orthanc SCP accepts all DICOM commands (C-GET,
-     * C-STORE, C-FIND, C-MOVE) issued by the remote SCU
+     * By default, the Orthanc SCP accepts all DICOM commands (C-ECHO,
+     * C-STORE, C-FIND, C-MOVE) issued by the registered remote SCU
      * modalities. Starting with Orthanc 1.5.0, it is possible to
      * specify which DICOM commands are allowed, separately for each
-     * remote modality, using the syntax below.
+     * remote modality, using the syntax below. The "AllowEcho" (resp.
+     * "AllowStore") option only has an effect respectively if global
+     * option "DicomAlwaysAllowEcho" (resp. "DicomAlwaysAllowStore")
+     * is set to false.
      **/
     //"untrusted" : {
     //  "AET" : "ORTHANC",
@@ -280,7 +290,7 @@
   "HttpVerbose" : false,
 
   // Set the timeout for HTTP requests issued by Orthanc (in seconds).
-  "HttpTimeout" : 10,
+  "HttpTimeout" : 60,
 
   // Enable the verification of the peers during HTTPS requests. This
   // option must be set to "false" if using self-signed certificates.
@@ -393,7 +403,7 @@
   // Maximum number of query/retrieve DICOM requests that are
   // maintained by Orthanc. The least recently used requests get
   // deleted as new requests are issued.
-  "QueryRetrieveSize" : 10,
+  "QueryRetrieveSize" : 100,
 
   // When handling a C-Find SCP request, setting this flag to "true"
   // will enable case-sensitive match for PN value representation
@@ -497,5 +507,15 @@
   // set to "true", the metrics can be retrieved at
   // "/tools/metrics-prometheus" formetted using the Prometheus
   // text-based exposition format.
-  "MetricsEnabled" : true
+  "MetricsEnabled" : true,
+
+  // Whether calls to URI "/tools/execute-script" is enabled. Starting
+  // with Orthanc 1.5.8, this URI is disabled by default for security.
+  "ExecuteLuaEnabled" : false,
+
+  // Set the timeout for HTTP requests, in seconds. This corresponds
+  // to option "request_timeout_ms" of Mongoose/Civetweb. It will set
+  // the socket options "SO_RCVTIMEO" and "SO_SNDTIMEO" to the
+  // specified value.
+  "HttpRequestTimeout" : 30
 }

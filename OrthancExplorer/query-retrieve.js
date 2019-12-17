@@ -84,11 +84,11 @@ $('#qr-submit').live('click', function() {
   query = {
     'Level' : 'Study',
     'Query' : {
-      'AccessionNumber' : '*',
-      'PatientBirthDate' : '*',
-      'PatientID' : '*',
-      'PatientName' : '*',
-      'PatientSex' : '*',
+      'AccessionNumber' : '',
+      'PatientBirthDate' : '',
+      'PatientID' : '',
+      'PatientName' : '',
+      'PatientSex' : '',
       'StudyDate' : $('#qr-date').val(),
       'StudyDescription' : '*'
     }

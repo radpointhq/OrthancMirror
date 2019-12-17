@@ -50,6 +50,14 @@ namespace Orthanc
     {
     }
 
+    virtual bool CreateChunkedRequestReader(std::auto_ptr<IChunkedRequestReader>& target,
+                                            RequestOrigin origin,
+                                            const char* remoteIp,
+                                            const char* username,
+                                            HttpMethod method,
+                                            const UriComponents& uri,
+                                            const Arguments& headers);
+
     virtual bool Handle(HttpOutput& output,
                         RequestOrigin origin,
                         const char* remoteIp,
@@ -58,7 +66,7 @@ namespace Orthanc
                         const UriComponents& uri,
                         const Arguments& headers,
                         const GetArguments& getArguments,
-                        const char* bodyData,
+                        const void* bodyData,
                         size_t bodySize);
 
     void Register(IHttpHandler& handler,

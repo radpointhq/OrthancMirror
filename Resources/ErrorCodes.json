@@ -212,6 +212,11 @@
     "Name": "CanceledJob", 
     "Description": "This job was canceled"
   }, 
+  {
+    "Code": 38, 
+    "Name": "BadGeometry", 
+    "Description": "Geometry error encountered in Stone"
+  }, 
 
 
 
@@ -314,11 +319,6 @@
     "Description": "SQLite: Cannot start a transaction",
     "SQLite": true
   },
-
-
-
-
-
 
 
 
@@ -546,5 +546,16 @@
     "Code": 2042,
     "Name": "AlreadyExistingTag",
     "Description": "Cannot override the value of a tag that already exists"
+  },
+
+
+
+  /** HTTP-related error codes **/
+
+  {
+    "Code": 3000,
+    "HttpStatus": 415, 
+    "Name": "UnsupportedMediaType",
+    "Description": "Unsupported media type"
   }
 ]

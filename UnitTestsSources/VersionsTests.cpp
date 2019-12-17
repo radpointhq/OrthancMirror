@@ -44,7 +44,10 @@
 #include <sqlite3.h>
 #include <lua.h>
 #include <jpeglib.h>
-#include <iconv.h>
+
+#if BUILDING_LIBICONV == 1
+#  include <iconv.h>
+#endif
 
 #if ORTHANC_ENABLE_SSL == 1
 #  include <openssl/opensslv.h>
@@ -52,6 +55,10 @@
 
 #if ORTHANC_ENABLE_CIVETWEB == 1
 #  include <civetweb.h>
+#endif
+
+#if ORTHANC_ENABLE_PUGIXML == 1
+#  include <pugixml.hpp>
 #endif
 
 
@@ -108,25 +115,25 @@ TEST(Versions, ZlibStatic)
 
 TEST(Versions, BoostStatic)
 {
-  ASSERT_STREQ("1_68", BOOST_LIB_VERSION);
+  ASSERT_STREQ("1_69", BOOST_LIB_VERSION);
 }
 
 TEST(Versions, CurlStatic)
 {
   curl_version_info_data* v = curl_version_info(CURLVERSION_NOW);
-  ASSERT_STREQ("7.57.0", v->version);
+  ASSERT_STREQ("7.64.0", v->version);
 }
 
 TEST(Versions, PngStatic)
 {
-  ASSERT_EQ(10512u, png_access_version_number());
-  ASSERT_STREQ("1.5.12", PNG_LIBPNG_VER_STRING);
+  ASSERT_EQ(10636u, png_access_version_number());
+  ASSERT_STREQ("1.6.36", PNG_LIBPNG_VER_STRING);
 }
 
 TEST(Versions, JpegStatic)
 {
   ASSERT_EQ(9, JPEG_LIB_VERSION_MAJOR);
-  ASSERT_EQ(1, JPEG_LIB_VERSION_MINOR);
+  ASSERT_EQ(3, JPEG_LIB_VERSION_MINOR);
 }
 
 TEST(Versions, CurlSslStatic)
@@ -148,18 +155,21 @@ TEST(Version, LuaStatic)
   ASSERT_STREQ("Lua 5.3.5", LUA_RELEASE);
 }
 
+
+#if BUILDING_LIBICONV == 1
 TEST(Version, LibIconvStatic)
 {
   static const int major = 1;
   static const int minor = 15;  
   ASSERT_EQ((major << 8) + minor, _LIBICONV_VERSION);
 }
+#endif
 
 
 #if ORTHANC_ENABLE_SSL == 1
 TEST(Version, OpenSslStatic)
 {
-  ASSERT_EQ(0x100020ffL /* openssl-1.0.2o */, OPENSSL_VERSION_NUMBER);
+  ASSERT_EQ(0x1000210fL /* openssl-1.0.2p */, OPENSSL_VERSION_NUMBER);
 }
 #endif
 
@@ -188,6 +198,12 @@ TEST(Version, Civetweb)
 #endif
 
 
+#if ORTHANC_ENABLE_PUGIXML == 1
+TEST(Version, Pugixml)
+{
+  ASSERT_EQ(190, PUGIXML_VERSION);
+}
 #endif
 
 
+#endif

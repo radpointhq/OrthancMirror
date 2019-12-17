@@ -39,6 +39,18 @@ elseif (MSVC)
   # Add /Zm256 compiler option to Visual Studio to fix PCH errors
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zm256")
 
+  # New in Orthanc 1.5.5
+  if (MSVC_MULTIPLE_PROCESSES)
+    # "If you omit the processMax argument in the /MP option, the
+    # compiler obtains the number of effective processors from the
+    # operating system, and then creates one process per effective
+    # processor"
+    # https://blog.kitware.com/cmake-building-with-all-your-cores/
+    # https://docs.microsoft.com/en-us/cpp/build/reference/mp-build-with-multiple-processes
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+  endif()
+    
   add_definitions(
     -D_CRT_SECURE_NO_WARNINGS=1
     -D_CRT_SECURE_NO_DEPRECATE=1
@@ -152,7 +164,7 @@ elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Windows")
     SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${MINGW_NO_WARNINGS}")
 
     # This is a patch for MinGW64
-    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-multiple-definition -static-libgcc -static-libstdc++")
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--allow-multiple-definition -static-libgcc -static-libstdc++")
     SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--allow-multiple-definition -static-libgcc -static-libstdc++")
 
     CHECK_LIBRARY_EXISTS(winpthread pthread_create "" HAVE_WIN_PTHREAD)
@@ -181,7 +193,11 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
   # zero (and similar conditions like integer overflows) are
   # encountered: The "clamp" mode avoids throwing errors, as they
   # cannot be properly catched by "try {} catch (...)" constructions.
-  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXTRA_EXPORTED_RUNTIME_METHODS='[\"ccall\", \"cwrap\"]' -s BINARYEN_TRAP_MODE='\"clamp\"'")
+  if (EMSCRIPTEN_SET_LLVM_WASM_BACKEND)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXTRA_EXPORTED_RUNTIME_METHODS='[\"ccall\", \"cwrap\"]'")
+  else()
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s EXTRA_EXPORTED_RUNTIME_METHODS='[\"ccall\", \"cwrap\"]' -s BINARYEN_TRAP_MODE='\"clamp\"'")
+  endif()
 
 elseif (CMAKE_SYSTEM_NAME STREQUAL "Android")
 
